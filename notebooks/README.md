@@ -39,8 +39,8 @@ jupyter notebook
    - Visualizes betas, contribution decomposition, and rolling alpha/beta.
 
 ## Data Notes
-- The included sample dataset under `data/raw/` is synthetic, intended for runnable demos.
-- Replace with real disclosures and real price histories for production-quality conclusions.
+- `data/raw/disclosures/disclosures.csv` uses public-filing-derived holdings for Buffett, Pelosi, and Trump.
+- `data/raw/prices/prices.csv` is synthetic for runnable demos; replace with real market prices for research-quality conclusions.
 
 ## Related Outputs
 - Batch script outputs are written to `reports/output/<person>/`.

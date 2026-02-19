@@ -41,19 +41,23 @@ def black_litterman_posterior(
     q_views: np.ndarray,
     tau: float,
     omega: np.ndarray | None = None,
+    ridge: float = 1e-6,
 ) -> tuple[np.ndarray, np.ndarray]:
     sigma = np.asarray(covariance, dtype=float)
     p = np.asarray(p_matrix, dtype=float)
     q = np.asarray(q_views, dtype=float)
 
+    sigma = sigma + np.eye(sigma.shape[0]) * ridge
+
     if omega is None:
         omega = np.diag(np.diag(p @ (tau * sigma) @ p.T))
+    omega = np.asarray(omega, dtype=float) + np.eye(omega.shape[0]) * ridge
 
-    tau_sigma_inv = np.linalg.inv(tau * sigma)
-    omega_inv = np.linalg.inv(omega)
+    tau_sigma_inv = np.linalg.pinv(tau * sigma)
+    omega_inv = np.linalg.pinv(omega)
 
     middle = tau_sigma_inv + p.T @ omega_inv @ p
-    middle_inv = np.linalg.inv(middle)
+    middle_inv = np.linalg.pinv(middle)
 
     posterior_mean = middle_inv @ (tau_sigma_inv @ pi + p.T @ omega_inv @ q)
     posterior_covariance = sigma + middle_inv

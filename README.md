@@ -82,6 +82,12 @@ Generated outputs include:
 
 All written under `reports/output/<person>/`.
 
+## Data Source Snapshot
+- Buffett holdings come from Berkshire Hathaway's latest SEC 13F filing (as of `2025-12-31`) with a major-position ticker-mapped subset in this starter dataset.
+- Pelosi holdings come from U.S. House financial disclosure report `10066169` (range-based values converted to midpoints).
+- Trump holdings come from OGE 278e annual disclosure (range-based values converted to midpoints/lower bounds).
+- Bundled `prices.csv` is synthetic to keep examples runnable; replace with real prices for production analysis.
+
 ## Notebook Demos
 Launch:
 ```bash
@@ -97,8 +103,14 @@ Open:
 
 Note: Notebook 4 uses ETF benchmarks when present (for example `SPY`, `XLK`, `XLE`, `XLF`) and falls back to transparent ticker proxies when benchmark tickers are missing.
 
+## Notebook Analysis Data Status (Updated February 19, 2026)
+- The notebooks now ingest filing-derived `data/raw/disclosures/disclosures.csv` by default (Buffett, Pelosi, Trump).
+- Portfolio composition, cross-person coverage, and strategy weights reflect these filing-derived holdings when you run the notebooks.
+- Performance/backtest results still depend on `data/raw/prices/prices.csv`, which is currently synthetic.
+- For research-grade conclusions, replace `data/raw/prices/prices.csv` with real historical market prices.
+
 ## Current Status and Next Steps
-- Current sample data under `data/raw/` is synthetic so the project runs out-of-the-box.
-- Replace synthetic data with real disclosure/price histories for production-quality conclusions.
+- `data/raw/disclosures/disclosures.csv` now uses real public-filing-derived holdings for Buffett, Pelosi, and Trump.
+- `data/raw/prices/prices.csv` remains synthetic and should be replaced with real price histories.
 - Extend benchmark/factor set and add transaction-cost/slippage assumptions.
 - Add automated figure export from notebooks to `reports/output/figures/`.
