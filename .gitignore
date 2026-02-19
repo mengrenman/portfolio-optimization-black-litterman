@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.DS_Store
+
+# Project outputs
+reports/output/
+data/interim/
+data/processed/
+
+# Raw data (not versioned)
+data/raw/

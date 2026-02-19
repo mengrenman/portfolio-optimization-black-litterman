@@ -1,0 +1,20 @@
+data:
+  disclosures_path: data/raw/disclosures/disclosures.csv
+  prices_path: data/raw/prices/prices.csv
+
+backtest:
+  lookback_periods: 6
+  rebalance_frequency: ME
+  risk_aversion: 2.5
+  tau: 0.05
+
+case_studies:
+  buffett:
+    person_label: Warren Buffett
+    disclosure_aliases: ["buffett", "warren buffett", "berkshire hathaway"]
+  pelosi:
+    person_label: Nancy Pelosi
+    disclosure_aliases: ["pelosi", "nancy pelosi"]
+  trump:
+    person_label: Donald Trump
+    disclosure_aliases: ["trump", "donald trump"]
