@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.env/
+
+# Test / lint caches
+.pytest_cache/
+.cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Local tooling
+.claude/
+.vscode/
+
+# Data (intermediate/processed outputs only; raw inputs are versioned)
+data/raw/**/*.parquet
+data/raw/**/*.json
+data/interim/
+data/processed/
+
+# Reports / generated outputs
+reports/output/
+
+# Editor backup files
+*~
