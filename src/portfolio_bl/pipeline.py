@@ -124,20 +124,37 @@ def run_case_study(
     )
     lookback = app_config.backtest.lookback_periods
 
+    def _drop_nan_tickers(train_returns: pd.DataFrame) -> pd.DataFrame:
+        """Drop tickers that have no data yet (pre-IPO NaN columns)."""
+        return train_returns.dropna(axis=1)
+
     def mvo_fn(train_returns: pd.DataFrame, _date: pd.Timestamp) -> pd.Series:
-        mu, cov = estimate_mean_cov(train_returns)
+        valid = _drop_nan_tickers(train_returns)
+        if valid.shape[1] < 2:
+            return pd.Series(dtype=float)
+        mu, cov = estimate_mean_cov(valid)
         return long_only_markowitz_weights(mu, cov)
 
     def bl_fn(train_returns: pd.DataFrame, _date: pd.Timestamp) -> pd.Series:
-        mu, cov = estimate_mean_cov(train_returns)
+        valid = _drop_nan_tickers(train_returns)
+        if valid.shape[1] < 2:
+            return pd.Series(dtype=float)
+        valid_tickers = list(valid.columns)
+        mu, cov = estimate_mean_cov(valid)
+
+        valid_weights = market_weights.reindex(valid_tickers).fillna(0.0)
+        if valid_weights.sum() > 0:
+            valid_weights = valid_weights / valid_weights.sum()
+        else:
+            valid_weights = pd.Series(1.0 / len(valid_tickers), index=valid_tickers)
 
         pi = implied_equilibrium_returns(
             covariance=cov,
-            market_weights=market_weights,
+            market_weights=valid_weights,
             risk_aversion=app_config.backtest.risk_aversion,
         )
 
-        p = np.eye(len(universe), dtype=float)
+        p = np.eye(len(valid_tickers), dtype=float)
         q = mu.to_numpy(dtype=float)
         omega = diagonal_omega_from_confidence(
             covariance=cov.to_numpy(dtype=float),
@@ -155,8 +172,8 @@ def run_case_study(
             omega=omega,
         )
 
-        posterior_mu_s = pd.Series(posterior_mu, index=universe)
-        posterior_cov_df = pd.DataFrame(posterior_cov, index=universe, columns=universe)
+        posterior_mu_s = pd.Series(posterior_mu, index=valid_tickers)
+        posterior_cov_df = pd.DataFrame(posterior_cov, index=valid_tickers, columns=valid_tickers)
         return long_only_markowitz_weights(posterior_mu_s, posterior_cov_df)
 
     disclosed_fn = _constant_weight_fn(market_weights)

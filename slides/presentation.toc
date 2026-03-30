@@ -1,0 +1,10 @@
+\beamer@sectionintoc {1}{Motivation \& Research Question}{3}{0}{1}
+\beamer@sectionintoc {2}{Data Pipeline}{4}{0}{2}
+\beamer@sectionintoc {3}{Three Strategies}{5}{0}{3}
+\beamer@sectionintoc {4}{The Black-Litterman Model}{6}{0}{4}
+\beamer@sectionintoc {5}{Walk-Forward Backtest Engine}{8}{0}{5}
+\beamer@sectionintoc {6}{Performance Metrics}{9}{0}{6}
+\beamer@sectionintoc {7}{Notebooks \& Results}{10}{0}{7}
+\beamer@sectionintoc {8}{Codebase Architecture}{13}{0}{8}
+\beamer@sectionintoc {9}{Known Limitation \& Extensions}{14}{0}{9}
+\beamer@sectionintoc {10}{Summary}{15}{0}{10}
