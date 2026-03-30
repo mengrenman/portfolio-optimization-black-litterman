@@ -33,5 +33,8 @@ data/processed/
 reports/output/
 reports/
 
+# Slides
+slides/
+
 # Editor backup files
 *~
