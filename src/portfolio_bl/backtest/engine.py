@@ -74,18 +74,12 @@ def rolling_backtest(
     if rebalance_dates.empty:
         raise ValueError("No rebalance dates intersect with return index.")
 
-    # Build an ordered list of rebalance dates so that ``lookback_periods``
-    # is interpreted as the number of *rebalance intervals* (e.g. months),
-    # not the number of rows in the daily return matrix.
-    reb_list = list(rebalance_dates)
-    eligible_rebalances = [
-        d for idx, d in enumerate(reb_list) if idx >= lookback_periods
-    ]
+    eligible_rebalances = [d for d in rebalance_dates if all_dates.get_loc(d) >= lookback_periods]
     if not eligible_rebalances:
         raise ValueError("No rebalance date has enough lookback observations.")
 
     logger.debug(
-        "Starting backtest: %d eligible rebalance(s), lookback=%d rebalance periods, tickers=%d.",
+        "Starting backtest: %d eligible rebalance(s), lookback=%d, tickers=%d.",
         len(eligible_rebalances),
         lookback_periods,
         len(returns.columns),
@@ -98,12 +92,7 @@ def rolling_backtest(
 
     for i, reb_date in enumerate(eligible_rebalances):
         reb_idx = all_dates.get_loc(reb_date)
-        # Look back ``lookback_periods`` rebalance dates to find the start of
-        # the training window, then slice all daily rows in between.
-        reb_pos = reb_list.index(reb_date)
-        lookback_start_date = reb_list[reb_pos - lookback_periods]
-        lookback_start_idx = all_dates.get_loc(lookback_start_date)
-        train = returns.iloc[lookback_start_idx : reb_idx]
+        train = returns.iloc[reb_idx - lookback_periods : reb_idx]
 
         weights = weight_fn(train, reb_date).reindex(returns.columns).fillna(0.0)
         if weights.sum() <= 0:
