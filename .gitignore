@@ -29,10 +29,6 @@ data/raw/**/*.json
 data/interim/
 data/processed/
 
-# Reports / generated outputs
-reports/output/
-reports/
-
 # Slides
 slides/
 
