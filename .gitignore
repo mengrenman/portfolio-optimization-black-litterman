@@ -1,0 +1,19 @@
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Packaging
+*.egg-info/
+
+# Local tools
+.claude/
+.idea/
+
+# Project artifacts
+slides/
+reports/
+data/
