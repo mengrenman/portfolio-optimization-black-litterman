@@ -1,0 +1,52 @@
+person,as_of_date,ticker,value_usd,source
+Warren Buffett,2025-12-31,AXP,56088378465,SEC 13F-HR 2026-02-17 https://www.sec.gov/Archives/edgar/data/1067983/000119312526054580/d251632d13fhr.htm
+Warren Buffett,2025-12-31,AAPL,38268369638,SEC 13F-HR 2026-02-17 https://www.sec.gov/Archives/edgar/data/1067983/000119312526054580/d251632d13fhr.htm
+Warren Buffett,2025-12-31,BAC,28451276370,SEC 13F-HR 2026-02-17 https://www.sec.gov/Archives/edgar/data/1067983/000119312526054580/d251632d13fhr.htm
+Warren Buffett,2025-12-31,KO,27964000000,SEC 13F-HR 2026-02-17 https://www.sec.gov/Archives/edgar/data/1067983/000119312526054580/d251632d13fhr.htm
+Warren Buffett,2025-12-31,CVX,19837131131,SEC 13F-HR 2026-02-17 https://www.sec.gov/Archives/edgar/data/1067983/000119312526054580/d251632d13fhr.htm
+Warren Buffett,2025-12-31,MCO,12565723807,SEC 13F-HR 2026-02-17 https://www.sec.gov/Archives/edgar/data/1067983/000119312526054580/d251632d13fhr.htm
+Warren Buffett,2025-12-31,OXY,10894391643,SEC 13F-HR 2026-02-17 https://www.sec.gov/Archives/edgar/data/1067983/000119312526054580/d251632d13fhr.htm
+Warren Buffett,2025-12-31,CB,10689854998,SEC 13F-HR 2026-02-17 https://www.sec.gov/Archives/edgar/data/1067983/000119312526054580/d251632d13fhr.htm
+Warren Buffett,2025-12-31,KHC,7896644337,SEC 13F-HR 2026-02-17 https://www.sec.gov/Archives/edgar/data/1067983/000119312526054580/d251632d13fhr.htm
+Warren Buffett,2025-12-31,GOOGL,5585842446,SEC 13F-HR 2026-02-17 https://www.sec.gov/Archives/edgar/data/1067983/000119312526054580/d251632d13fhr.htm
+Warren Buffett,2025-12-31,V,3778737705,SEC 13F-HR 2026-02-17 https://www.sec.gov/Archives/edgar/data/1067983/000119312526054580/d251632d13fhr.htm
+Warren Buffett,2025-12-31,DVA,3608147375,SEC 13F-HR 2026-02-17 https://www.sec.gov/Archives/edgar/data/1067983/000119312526054580/d251632d13fhr.htm
+Warren Buffett,2025-12-31,MA,2275897610,SEC 13F-HR 2026-02-17 https://www.sec.gov/Archives/edgar/data/1067983/000119312526054580/d251632d13fhr.htm
+Warren Buffett,2025-12-31,AMZN,525346320,SEC 13F-HR 2026-02-17 https://www.sec.gov/Archives/edgar/data/1067983/000119312526054580/d251632d13fhr.htm
+Nancy Pelosi,2024-12-31,AAPL,37500000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,GOOGL,15000000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,AMZN,15000000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,MSFT,15000000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,NVDA,15000000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,CRM,15000000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,AXP,3000000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,CRWD,3000000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,NFLX,3000000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,PANW,3000000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,V,3000000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,DIS,3000000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,CMCSA,750000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,DBX,375000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,IBKR,375000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,MORN,375000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,PYPL,375000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,RBLX,375000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,T,175000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,QCOM,32500,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,WBD,32500,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Nancy Pelosi,2024-12-31,CLNE,8000,House FD 10066169 midpoint from reported range https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2024/10066169.pdf
+Donald Trump,2024-12-31,SPY,750000,OGE 278e 2025 annual midpoint from reported range https://www.citizensforethics.org/wp-content/uploads/2025/08/Trump-2025-Annual-278.pdf
+Donald Trump,2024-12-31,VDE,750000,OGE 278e 2025 annual midpoint from reported range https://www.citizensforethics.org/wp-content/uploads/2025/08/Trump-2025-Annual-278.pdf
+Donald Trump,2024-12-31,XLE,750000,OGE 278e 2025 annual midpoint from reported range https://www.citizensforethics.org/wp-content/uploads/2025/08/Trump-2025-Annual-278.pdf
+Donald Trump,2024-12-31,DGRO,375000,OGE 278e 2025 annual midpoint from reported range https://www.citizensforethics.org/wp-content/uploads/2025/08/Trump-2025-Annual-278.pdf
+Donald Trump,2024-12-31,SCHD,375000,OGE 278e 2025 annual midpoint from reported range https://www.citizensforethics.org/wp-content/uploads/2025/08/Trump-2025-Annual-278.pdf
+Donald Trump,2024-12-31,UNG,375000,OGE 278e 2025 annual midpoint from reported range https://www.citizensforethics.org/wp-content/uploads/2025/08/Trump-2025-Annual-278.pdf
+Donald Trump,2024-12-31,VIG,375000,OGE 278e 2025 annual midpoint from reported range https://www.citizensforethics.org/wp-content/uploads/2025/08/Trump-2025-Annual-278.pdf
+Donald Trump,2024-12-31,BND,175000,OGE 278e 2025 annual midpoint from reported range https://www.citizensforethics.org/wp-content/uploads/2025/08/Trump-2025-Annual-278.pdf
+Donald Trump,2024-12-31,EMB,175000,OGE 278e 2025 annual midpoint from reported range https://www.citizensforethics.org/wp-content/uploads/2025/08/Trump-2025-Annual-278.pdf
+Donald Trump,2024-12-31,LQD,175000,OGE 278e 2025 annual midpoint from reported range https://www.citizensforethics.org/wp-content/uploads/2025/08/Trump-2025-Annual-278.pdf
+Donald Trump,2024-12-31,MUB,175000,OGE 278e 2025 annual midpoint from reported range https://www.citizensforethics.org/wp-content/uploads/2025/08/Trump-2025-Annual-278.pdf
+Donald Trump,2024-12-31,VGIT,175000,OGE 278e 2025 annual midpoint from reported range https://www.citizensforethics.org/wp-content/uploads/2025/08/Trump-2025-Annual-278.pdf
+Donald Trump,2024-12-31,VNQ,175000,OGE 278e 2025 annual midpoint from reported range https://www.citizensforethics.org/wp-content/uploads/2025/08/Trump-2025-Annual-278.pdf
+Donald Trump,2024-12-31,VPL,175000,OGE 278e 2025 annual midpoint from reported range https://www.citizensforethics.org/wp-content/uploads/2025/08/Trump-2025-Annual-278.pdf
+Donald Trump,2024-12-31,DJT,50000000,OGE 278e 2025 annual reported as Over $50M (lower-bound used) https://www.citizensforethics.org/wp-content/uploads/2025/08/Trump-2025-Annual-278.pdf
