@@ -14,11 +14,12 @@ Can a Black-Litterman overlay improve portfolio quality relative to:
 - Strategy comparison:
   - `disclosed` (static disclosed weights),
   - `mean_variance` (sample-estimated Markowitz),
-  - `black_litterman` (equilibrium + views posterior).
+  - `black_litterman` (equilibrium + views posterior; explicit pick-matrix views per case study).
 - Metrics: annual return/volatility, Sharpe, Sortino, max drawdown, HHI concentration, turnover.
 - CLI pipeline with structured logging (`--verbose` flag) that writes per-case outputs to `reports/output/<person>/`.
 - Four notebooks with visual diagnostics, strategy comparison, sensitivity analysis, and benchmark attribution.
 - Configurable `view_confidence` parameter exposed via YAML and `BacktestConfig`.
+- Explicit absolute and relative views with per-view confidence, defined in YAML per case study.
 
 ## Important Caveats
 - Public disclosures are delayed, incomplete, and sometimes approximate.
@@ -38,7 +39,7 @@ on arbitrary statistics including implied volatility.
 ## Repository Layout
 ```text
 portfolio-optimization-black-litterman/
-  configs/                   # Case-study and backtest parameters (incl. view_confidence)
+  configs/                   # Case-study and backtest parameters (incl. view_confidence, views)
   data/
     raw/
       disclosures/           # Input holdings disclosures CSV
@@ -52,9 +53,9 @@ portfolio-optimization-black-litterman/
   src/portfolio_bl/
     backtest/                # Rolling backtest and metrics
     data/                    # Disclosure + price loaders
-    models/                  # BL + mean-variance logic
+    models/                  # BL posterior, pick-matrix views, mean-variance logic
     pipeline.py              # End-to-end experiment runner
-  tests/                     # Unit + integration tests (63 tests)
+  tests/                     # Unit + integration tests (110 tests)
 ```
 
 ## Input Data Schemas
@@ -109,6 +110,7 @@ backtest:
   risk_aversion: 2.5         # λ in π = λΣw_mkt
   tau: 0.05                  # Prior uncertainty scalar
   view_confidence: 0.65      # BL analyst confidence (0, 1]
+  use_sample_mean_views: true  # stack explicit views on the sample-mean views
 ```
 
 `view_confidence` controls how strongly the analyst's sample-mean views override the
@@ -121,6 +123,61 @@ from portfolio_bl.pipeline import run_case_study
 
 cfg = load_config("configs/case_studies.yaml")
 result = run_case_study(cfg, person_key="buffett", view_confidence=0.80)
+```
+
+## Expressing Views with a Pick Matrix
+
+The Black-Litterman strategy accepts explicit analyst views per case study. Each view is
+one row of the pick matrix `P` with its target return in `q`. Views live under the case
+study in `configs/case_studies.yaml`:
+
+```yaml
+case_studies:
+  buffett:
+    person_label: Warren Buffett
+    disclosure_aliases: ["buffett", "warren buffett", "berkshire hathaway"]
+    views:
+      - label: AAPL absolute
+        assets: {AAPL: 1.0}            # absolute view: one ticker, coefficient 1
+        annual_return: 0.08            # AAPL returns 8% per year
+        confidence: 0.6                # optional; overrides backtest.view_confidence
+      - label: CVX over OXY
+        assets: {CVX: 1.0, OXY: -1.0}  # relative view: long side +1, short side -1
+        annual_return: 0.02            # CVX beats OXY by 2% per year
+```
+
+Rules and behaviour:
+
+- `assets` maps tickers to pick-matrix coefficients. An absolute view has one ticker with
+  coefficient 1. A relative view has positive coefficients on the outperformers and negative
+  coefficients on the underperformers; by convention each side sums to 1 in absolute value.
+- `annual_return` is an annualised arithmetic return. It is divided by the number of return
+  periods per year (252 for daily data) so it matches the scale of the covariance matrix.
+- `confidence` is optional and per view, in `(0, 1]`. Views without it use
+  `backtest.view_confidence`, as does the `view_confidence` override of `run_case_study`.
+- By default (`use_sample_mean_views: true`) explicit views are stacked on top of the
+  built-in sample-mean views, so the existing case studies are unchanged when no views are
+  configured. Set `use_sample_mean_views: false` to optimise on explicit views alone. With
+  that flag off and no views, the posterior equals the prior and the Black-Litterman
+  weights track the disclosed portfolio.
+- A view that references a ticker outside the case study's universe is ignored with a
+  warning. A view naming a ticker without a *complete* lookback window of returns (a
+  recently listed name) is not applied while that is true: the estimator drops any ticker
+  with missing history from the window, so the ticker also carries zero Black-Litterman
+  weight there. Both resume once the ticker has `lookback_periods` full periods of history,
+  which is later than its first traded day.
+
+Programmatic use:
+
+```python
+from portfolio_bl.models.views import View, build_view_matrices
+
+views = [
+    View({"AAPL": 1.0}, annual_return=0.08, confidence=0.6),
+    View({"CVX": 1.0, "OXY": -1.0}, annual_return=0.02),
+]
+built = build_view_matrices(views, tickers, periods_per_year=252, default_confidence=0.65)
+built.p_matrix, built.q_views, built.confidences  # P (k×n), q (k,), confidence per view (k,)
 ```
 
 ## Data Source Snapshot

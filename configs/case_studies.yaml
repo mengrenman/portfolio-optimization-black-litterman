@@ -8,11 +8,22 @@ backtest:
   risk_aversion: 2.5
   tau: 0.05
   view_confidence: 0.65
+  use_sample_mean_views: true   # false = optimise on the explicit views below only
 
 case_studies:
   buffett:
     person_label: Warren Buffett
     disclosure_aliases: ["buffett", "warren buffett", "berkshire hathaway"]
+    # Optional explicit Black-Litterman views. Each entry is one row of the
+    # pick matrix P. Uncomment to activate; see README "Expressing Views".
+    # views:
+    #   - label: AAPL absolute
+    #     assets: {AAPL: 1.0}            # absolute view: one ticker, coefficient 1
+    #     annual_return: 0.08            # AAPL returns 8% per year
+    #     confidence: 0.6                # optional; defaults to backtest.view_confidence
+    #   - label: CVX over OXY
+    #     assets: {CVX: 1.0, OXY: -1.0}  # relative view: long side +1, short side -1
+    #     annual_return: 0.02            # CVX beats OXY by 2% per year
   pelosi:
     person_label: Nancy Pelosi
     disclosure_aliases: ["pelosi", "nancy pelosi"]

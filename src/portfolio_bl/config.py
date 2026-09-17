@@ -6,6 +6,8 @@ from pathlib import Path
 
 import yaml
 
+from portfolio_bl.models.views import View
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,7 +29,13 @@ class BacktestConfig:
             Black-Litterman model. Range (0, 1]; higher values reduce view
             uncertainty (Ω) and place more weight on the views relative to the
             equilibrium prior. Configurable via the ``backtest.view_confidence``
-            YAML key.
+            YAML key. Also the default confidence for explicit views that do
+            not set their own.
+        use_sample_mean_views: When ``True`` (default) the Black-Litterman
+            strategy expresses one absolute view per asset equal to the
+            lookback sample mean, on top of any explicit views. When ``False``
+            only the explicit views configured per case study are used, and a
+            case study with no views falls back to the equilibrium prior.
     """
 
     lookback_periods: int = 12
@@ -35,6 +43,7 @@ class BacktestConfig:
     risk_aversion: float = 2.5
     tau: float = 0.05
     view_confidence: float = 0.65
+    use_sample_mean_views: bool = True
 
 
 @dataclass(frozen=True)
@@ -47,11 +56,14 @@ class CaseStudyConfig:
         person_label: Human-readable label used in report titles and plots.
         disclosure_aliases: Lowercase name variants that identify this
             person's rows in the disclosures CSV.
+        views: Explicit Black-Litterman views for this case study, each one
+            becoming a row of the pick matrix. Empty by default.
     """
 
     key: str
     person_label: str
     disclosure_aliases: tuple[str, ...]
+    views: tuple[View, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -71,6 +83,64 @@ class AppConfig:
     case_studies: dict[str, CaseStudyConfig]
 
 
+def _parse_bool(value: object, key: str) -> bool:
+    """Parse a YAML boolean, accepting common textual spellings."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "yes", "on", "1"}:
+            return True
+        if lowered in {"false", "no", "off", "0"}:
+            return False
+    raise ValueError(f"'{key}' must be a boolean, got {value!r}.")
+
+
+_VIEW_KEYS = frozenset({"assets", "annual_return", "confidence", "label"})
+
+
+def _parse_views(case_key: str, raw_views: object) -> tuple[View, ...]:
+    """Parse the optional ``views`` list of one case study into :class:`View`s.
+
+    Each entry must be a mapping with ``assets`` (ticker → coefficient) and
+    ``annual_return``, plus optional ``confidence`` and ``label``. Unknown keys
+    are rejected so that a misspelled ``confidence`` cannot silently fall back
+    to the global default. Errors are
+    prefixed with the case-study key and the 1-based view position so the
+    offending YAML block is easy to find.
+    """
+    if raw_views is None:
+        return ()
+    if not isinstance(raw_views, list):
+        raise ValueError(f"Case study '{case_key}': 'views' must be a list of mappings.")  # noqa: TRY004 - loader raises ValueError
+
+    views: list[View] = []
+    for position, item in enumerate(raw_views, start=1):
+        prefix = f"Case study '{case_key}' view {position}"
+        if not isinstance(item, dict):
+            raise ValueError(f"{prefix}: each view must be a mapping.")  # noqa: TRY004 - loader raises ValueError
+        missing = [k for k in ("assets", "annual_return") if k not in item]
+        if missing:
+            raise ValueError(f"{prefix}: missing required key(s): {', '.join(missing)}.")
+        unknown = sorted(str(k) for k in set(item) - _VIEW_KEYS)
+        if unknown:
+            raise ValueError(
+                f"{prefix}: unknown key(s): {', '.join(unknown)}. "
+                f"Valid keys: {', '.join(sorted(_VIEW_KEYS))}."
+            )
+        try:
+            view = View(
+                assets=item["assets"],
+                annual_return=item["annual_return"],
+                confidence=item.get("confidence"),
+                label=item.get("label"),
+            )
+        except ValueError as exc:
+            raise ValueError(f"{prefix}: {exc}") from exc
+        views.append(view)
+    return tuple(views)
+
+
 def load_config(path: str | Path) -> AppConfig:
     """Load application configuration from a YAML file.
 
@@ -82,8 +152,8 @@ def load_config(path: str | Path) -> AppConfig:
 
     Raises:
         FileNotFoundError: If the configuration file does not exist.
-        ValueError: If the YAML is malformed, is not a top-level mapping, or
-            contains no case studies.
+        ValueError: If the YAML is malformed, is not a top-level mapping,
+            contains no case studies, or defines a malformed view.
     """
     config_path = Path(path)
     if not config_path.exists():
@@ -112,15 +182,22 @@ def load_config(path: str | Path) -> AppConfig:
         risk_aversion=float(bt_cfg.get("risk_aversion", 2.5)),
         tau=float(bt_cfg.get("tau", 0.05)),
         view_confidence=float(bt_cfg.get("view_confidence", 0.65)),
+        use_sample_mean_views=_parse_bool(
+            bt_cfg.get("use_sample_mean_views", True), "backtest.use_sample_mean_views"
+        ),
     )
 
     case_studies: dict[str, CaseStudyConfig] = {}
     for key, item in case_cfg.items():
-        aliases = item.get("disclosure_aliases", [key])
-        case_studies[str(key)] = CaseStudyConfig(
-            key=str(key),
-            person_label=str(item.get("person_label", key.title())),
+        # YAML keys are not always strings (a bare 2024: parses as an int), so
+        # normalise once instead of calling str-only methods on the raw key.
+        key_str = str(key)
+        aliases = item.get("disclosure_aliases", [key_str])
+        case_studies[key_str] = CaseStudyConfig(
+            key=key_str,
+            person_label=str(item.get("person_label", key_str.title())),
             disclosure_aliases=tuple(str(a).strip().lower() for a in aliases),
+            views=_parse_views(key_str, item.get("views")),
         )
 
     if not case_studies:

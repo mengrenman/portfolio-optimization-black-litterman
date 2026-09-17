@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -40,30 +41,48 @@ def diagonal_omega_from_confidence(
     covariance: np.ndarray,
     p_matrix: np.ndarray,
     tau: float,
-    confidence: float,
+    confidence: float | Sequence[float] | np.ndarray,
 ) -> np.ndarray:
-    """Construct a diagonal view-uncertainty matrix Ω from a confidence scalar.
+    """Construct a diagonal view-uncertainty matrix Ω from view confidences.
 
-    Scales the projected prior covariance P(τΣ)Pᵀ by (1−c)/c, where c is the
-    analyst's confidence level. Higher confidence (c → 1) shrinks Ω, placing
-    more weight on the views relative to the equilibrium prior.
+    Scales each view's projected prior variance, the diagonal of P(τΣ)Pᵀ, by
+    (1−c)/c, where c is the confidence in that view. Higher confidence
+    (c → 1) shrinks Ω, placing more weight on the view relative to the
+    equilibrium prior.
 
     Args:
         covariance: Asset covariance matrix Σ as a 2-D numpy array (n × n).
         p_matrix: View-picking matrix P (k × n) mapping assets to views.
         tau: Prior uncertainty scalar (typically 0.01–0.10).
-        confidence: Analyst confidence in [1e-3, 1.0]. Clipped to this range.
+        confidence: Either one confidence applied to every view, or a
+            sequence of length k with one confidence per view. Values are
+            clipped to [1e-3, 1.0].
 
     Returns:
         A diagonal matrix Ω of shape (k × k).
+
+    Raises:
+        ValueError: If a per-view confidence sequence does not have exactly
+            one entry per row of ``p_matrix``.
     """
-    confidence = float(np.clip(confidence, 1e-3, 1.0))
-    projected = p_matrix @ (tau * covariance) @ p_matrix.T
-    diag = np.diag(projected)
+    p_matrix = np.asarray(p_matrix, dtype=float)
+    n_views = p_matrix.shape[0]
+
+    conf = np.atleast_1d(np.asarray(confidence, dtype=float))
+    if conf.size == 1:
+        conf = np.full(n_views, conf.item(), dtype=float)
+    elif conf.shape != (n_views,):
+        raise ValueError(
+            f"Expected one confidence per view ({n_views}), got shape {conf.shape}."
+        )
+    conf = np.clip(conf, 1e-3, 1.0)
+
+    projected = p_matrix @ (tau * np.asarray(covariance, dtype=float)) @ p_matrix.T
+    diag = np.diag(projected) if n_views > 0 else np.zeros(0, dtype=float)
     diag = np.where(diag <= 0, 1e-8, diag)
 
     # Higher confidence -> lower view uncertainty.
-    scale = (1.0 - confidence) / confidence
+    scale = (1.0 - conf) / conf
     return np.diag(diag * scale)
 
 
@@ -86,7 +105,10 @@ def black_litterman_posterior(
         Σ_BL = Σ + M⁻¹
 
     Pseudo-inverses are used throughout for numerical stability. A small ridge
-    term is added to Σ and Ω to guard against singularity.
+    term is added to Σ and Ω to guard against singularity. When ``p_matrix``
+    has no rows (no views) the posterior mean equals ``pi`` and the posterior
+    covariance equals (1 + τ)Σ, which is the same formula with the view term
+    removed.
 
     Args:
         pi: Equilibrium excess returns, shape (n,).
@@ -106,11 +128,18 @@ def black_litterman_posterior(
         ``posterior_mean`` has shape (n,) and ``posterior_covariance`` has
         shape (n × n).
     """
+    pi = np.asarray(pi, dtype=float)
     sigma = np.asarray(covariance, dtype=float)
     p = np.asarray(p_matrix, dtype=float)
     q = np.asarray(q_views, dtype=float)
 
     sigma = sigma + np.eye(sigma.shape[0]) * ridge
+
+    if p.ndim != 2 or p.shape[1] != sigma.shape[0]:
+        raise ValueError(f"p_matrix must have shape (k, {sigma.shape[0]}), got {p.shape}.")
+    if p.shape[0] == 0:
+        # No views: the posterior collapses to the prior and M⁻¹ = τΣ.
+        return pi.copy(), sigma * (1.0 + tau)
 
     if omega is None:
         omega = np.diag(np.diag(p @ (tau * sigma) @ p.T))

@@ -17,6 +17,7 @@ from portfolio_bl.models.black_litterman import (
     implied_equilibrium_returns,
 )
 from portfolio_bl.models.mean_variance import estimate_mean_cov, long_only_markowitz_weights
+from portfolio_bl.models.views import build_view_matrices
 
 logger = logging.getLogger(__name__)
 
@@ -66,12 +67,18 @@ def run_case_study(
     - **mean_variance**: rolling Markowitz MVO weights estimated from the
       lookback window.
     - **black_litterman**: rolling BL posterior weights combining equilibrium
-      returns with sample-mean views.
+      returns (implied from the disclosed weights) with views. By default the
+      views are one absolute view per asset equal to the lookback sample
+      mean; explicit views configured on the case study are stacked on top
+      as extra rows of the pick matrix. Set
+      ``backtest.use_sample_mean_views`` to ``False`` to use only the
+      explicit views.
 
-    The ``view_confidence`` argument controls how strongly analyst views
-    override the BL equilibrium prior. When not provided here, the value from
-    ``app_config.backtest.view_confidence`` is used (set via YAML or the
-    :class:`~portfolio_bl.config.BacktestConfig` default of 0.65).
+    The ``view_confidence`` argument controls how strongly views override the
+    BL equilibrium prior. It applies to the sample-mean views and to any
+    explicit view without its own ``confidence``. When not provided here, the
+    value from ``app_config.backtest.view_confidence`` is used (set via YAML
+    or the :class:`~portfolio_bl.config.BacktestConfig` default of 0.65).
 
     Args:
         app_config: Application configuration (paths, backtest hyper-params,
@@ -135,12 +142,42 @@ def run_case_study(
         mu, cov = estimate_mean_cov(valid)
         return long_only_markowitz_weights(mu, cov)
 
-    def bl_fn(train_returns: pd.DataFrame, _date: pd.Timestamp) -> pd.Series:
+    explicit_views = case_cfg.views
+    use_sample_views = app_config.backtest.use_sample_mean_views
+    periods_per_year = infer_periods_per_year(returns.index)
+
+    # Views that name a ticker outside the universe can never be applied.
+    # Warn once up front and remember them so the per-window warning below
+    # does not repeat the message.
+    skipped_view_warned: set[int] = set()
+    universe_set = set(universe)
+    for index, view in enumerate(explicit_views):
+        outside = sorted(set(view.tickers) - universe_set)
+        if outside:
+            skipped_view_warned.add(index)
+            logger.warning(
+                "View %s references %s, which is not in the universe; the view will never apply.",
+                view.describe(),
+                ", ".join(outside),
+            )
+
+    logger.info(
+        "Black-Litterman views: sample-mean views %s, %d explicit view(s).",
+        "on" if use_sample_views else "off",
+        len(explicit_views),
+    )
+    if not use_sample_views and not explicit_views:
+        logger.warning(
+            "No views configured; Black-Litterman weights will track the disclosed portfolio."
+        )
+
+    def bl_fn(train_returns: pd.DataFrame, date: pd.Timestamp) -> pd.Series:
         valid = _drop_nan_tickers(train_returns)
         if valid.shape[1] < 2:
             return pd.Series(dtype=float)
         valid_tickers = list(valid.columns)
         mu, cov = estimate_mean_cov(valid)
+        cov_np = cov.to_numpy(dtype=float)
 
         valid_weights = market_weights.reindex(valid_tickers).fillna(0.0)
         if valid_weights.sum() > 0:
@@ -154,18 +191,62 @@ def run_case_study(
             risk_aversion=app_config.backtest.risk_aversion,
         )
 
-        p = np.eye(len(valid_tickers), dtype=float)
-        q = mu.to_numpy(dtype=float)
+        # Assemble the pick matrix: optional sample-mean views (P = I) stacked
+        # on top of the explicit views that can be expressed on the tickers
+        # with data in this window.
+        p_blocks: list[np.ndarray] = []
+        q_blocks: list[np.ndarray] = []
+        conf_blocks: list[np.ndarray] = []
+
+        if use_sample_views:
+            n_assets = len(valid_tickers)
+            p_blocks.append(np.eye(n_assets, dtype=float))
+            q_blocks.append(mu.to_numpy(dtype=float))
+            conf_blocks.append(np.full(n_assets, confidence, dtype=float))
+
+        if explicit_views:
+            built = build_view_matrices(
+                explicit_views,
+                valid_tickers,
+                periods_per_year=periods_per_year,
+                default_confidence=confidence,
+            )
+            for index in built.dropped:
+                if index not in skipped_view_warned:
+                    skipped_view_warned.add(index)
+                    logger.warning(
+                        "View %s not applied from %s: a referenced ticker lacks a complete "
+                        "lookback window of returns, so it is excluded from the estimate. "
+                        "The view applies once every ticker it names has %d full lookback "
+                        "period(s) of history.",
+                        explicit_views[index].describe(),
+                        date.date(),
+                        lookback,
+                    )
+            if built.n_views > 0:
+                p_blocks.append(built.p_matrix)
+                q_blocks.append(built.q_views)
+                conf_blocks.append(built.confidences)
+
+        if p_blocks:
+            p = np.vstack(p_blocks)
+            q = np.concatenate(q_blocks)
+            view_confidences = np.concatenate(conf_blocks)
+        else:
+            p = np.zeros((0, len(valid_tickers)), dtype=float)
+            q = np.zeros(0, dtype=float)
+            view_confidences = np.zeros(0, dtype=float)
+
         omega = diagonal_omega_from_confidence(
-            covariance=cov.to_numpy(dtype=float),
+            covariance=cov_np,
             p_matrix=p,
             tau=app_config.backtest.tau,
-            confidence=confidence,
+            confidence=view_confidences,
         )
 
         posterior_mu, posterior_cov = black_litterman_posterior(
             pi=pi,
-            covariance=cov.to_numpy(dtype=float),
+            covariance=cov_np,
             p_matrix=p,
             q_views=q,
             tau=app_config.backtest.tau,
@@ -185,7 +266,6 @@ def run_case_study(
         "black_litterman": rolling_backtest(returns, rebalance_dates, lookback, bl_fn),
     }
 
-    periods_per_year = infer_periods_per_year(returns.index)
     summary = pd.DataFrame(
         {
             name: summarize_strategy(
