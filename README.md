@@ -43,6 +43,8 @@ on arbitrary statistics including implied volatility.
 ```text
 portfolio-optimization-black-litterman/
   configs/                   # Case-study and backtest parameters (incl. view_confidence, views)
+  docs/
+    figures/                 # Plots embedded in this README (light + dark variants)
   data/
     raw/
       disclosures/           # Input holdings disclosures CSV
@@ -52,6 +54,7 @@ portfolio-optimization-black-litterman/
     templates/               # Markdown report templates
     output/                  # Generated case-study artifacts
   scripts/
+    make_figures.py          # Regenerates docs/figures/
     run_case_study.py        # CLI entrypoint
   src/portfolio_bl/
     backtest/                # Rolling backtest and metrics
@@ -129,8 +132,9 @@ All written under `reports/output/<person>/`.
 ## Selected Results
 
 Every figure below comes from the bundled dataset and the shipped configuration (6-period
-lookback, month-end rebalancing, `view_confidence: 0.65`). Regenerate them with
-`python scripts/run_case_study.py --person <key>`.
+lookback, month-end rebalancing, `view_confidence: 0.65`). Regenerate the tables with
+`python scripts/run_case_study.py --person <key>` and the plots with
+`python scripts/make_figures.py`.
 
 ### Dataset at a glance
 
@@ -152,6 +156,14 @@ lookback, month-end rebalancing, `view_confidence: 0.65`). Regenerate them with
 
 Every disclosed ticker has price history, so no holding is dropped from any backtest.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/disclosed-concentration-dark.png">
+  <img alt="Holding weights for each disclosed portfolio, sorted. Buffett and Pelosi are spread across their holdings with largest positions near 25 percent, while DJT alone is 91 percent of the Trump book." src="docs/figures/disclosed-concentration.png">
+</picture>
+
+The Trump panel uses a different horizontal scale from the other two. The HHI figure in each
+title is scale-free and comparable across all three.
+
 ### Strategy comparison
 
 | Person | Strategy | Annual return | Annual vol | Sharpe | Max drawdown | Turnover |
@@ -166,6 +178,12 @@ Every disclosed ticker has price history, so no holding is dropped from any back
 | Trump | mean-variance | 8.4% | 10.5% | 0.80 | -17.2% | 28.0% |
 | Trump | Black-Litterman | 6.0% | 11.5% | 0.52 | -23.1% | 26.6% |
 | *benchmark* | *SPY, same window* | *14.6%* | *19.7%* | *0.74* | *-33.7%* | *n/a* |
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/equity-curves-dark.png">
+  <img alt="Growth of 1.0 for each strategy against SPY, on a log scale, for all three case studies. Buffett and Pelosi show the disclosed book ahead of both overlays. The Trump disclosed curve is flat until late 2021 and then swings violently with DJT." src="docs/figures/equity-curves.png">
+</picture>
+
 
 ### Reading the table
 
@@ -183,6 +201,12 @@ Every disclosed ticker has price history, so no holding is dropped from any back
   0.05 Sharpe into 0.80.
 - **Black-Litterman lands between its two inputs in every case**, which is what the model is
   built to do rather than a disappointment.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/drawdowns-dark.png">
+  <img alt="Peak-to-trough drawdown over time for each strategy. Buffett and Pelosi track each other closely. The Trump disclosed book sits below negative 80 percent for years while both overlays stay within negative 25 percent." src="docs/figures/drawdowns.png">
+</picture>
+
 
 ### View confidence interpolates between the two baselines
 
@@ -207,6 +231,12 @@ mean-variance portfolio is 0.002, so a fully trusted view really does recover th
 portfolio. And the Black-Litterman strategy is best understood as a tunable blend of the
 other two rather than an independent third model.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/confidence-sweep-dark.png">
+  <img alt="Left: distance from the Black-Litterman weights to the disclosed portfolio rises and distance to the mean-variance portfolio falls as view confidence increases, the two crossing between 0.05 and 0.2. Right: Sharpe ratio falls steadily from 0.73 to 0.50 across the same range." src="docs/figures/confidence-sweep.png">
+</picture>
+
+
 > **The confidence axis is calibrated.** Earlier versions added a fixed absolute `1e-6` to
 > the view-uncertainty matrix. Because that matrix holds per-period variances spanning
 > roughly `7e-8` to `6e-5` on these universes, the constant ranged from negligible to 41
@@ -217,6 +247,12 @@ other two rather than an independent third model.
 > disabled. Read this column as the calibrated quantity it now is. The figures above are
 > post-fix; the correction moved the Trump mean-variance Sharpe from 0.85 to 0.80, that
 > case study having the worst-conditioned covariance.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/confidence-calibration-dark.png">
+  <img alt="Realised versus configured view confidence for five assets spanning 3 to 49 percent annual volatility. Before the fix the lines fan out well below the identity line, with the least volatile asset reaching only 0.15 at full confidence. After the fix all five lie on the identity line." src="docs/figures/confidence-calibration.png">
+</picture>
+
 
 ## Methodology
 
@@ -655,7 +691,14 @@ these outputs and the report template are **not** tracked by git, while `data/` 
 ```bash
 pytest -q                       # 122 tests, about 2 seconds
 ruff check src tests scripts    # linting
+python scripts/make_figures.py  # regenerate docs/figures/ (needs matplotlib)
 ```
+
+`make_figures.py` writes a light and a dark variant of every plot, which the README pairs
+with `<picture>` so GitHub serves the one matching the reader's theme. Colours come from a
+categorical palette whose first three slots are documented to clear the colour-vision
+deficiency gates for every pair in both modes; the benchmark series is neutral grey rather
+than a fourth hue because it is context, not a peer.
 
 The suite is entirely self-contained: every fixture is synthetic and written to a temporary
 directory, so the tests never read `data/raw/` or `configs/case_studies.yaml` and cannot be
