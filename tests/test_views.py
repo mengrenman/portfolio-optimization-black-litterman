@@ -10,7 +10,7 @@ import yaml
 
 from portfolio_bl.config import load_config
 from portfolio_bl.data.prices import load_prices_csv, to_return_matrix
-from portfolio_bl.models._numeric import relative_ridge
+from portfolio_bl.models._numeric import mean_diagonal, relative_ridge
 from portfolio_bl.models.black_litterman import (
     black_litterman_posterior,
     diagonal_omega_from_confidence,
@@ -233,15 +233,18 @@ def _stacked_realised(cov: np.ndarray, pi: np.ndarray, q: np.ndarray, c: float) 
     return (mu - pi) / (q - pi)
 
 
-def test_stacked_views_are_calibrated_only_when_sigma_is_diagonal() -> None:
-    """Per-asset calibration is a single-view property, not a general one.
+def test_per_view_calibration_requires_uncorrelated_view_projections() -> None:
+    """Per-view calibration holds exactly when P(tau*Sigma)P' is diagonal.
 
-    With one view per asset active at once, Omega is diagonal but (tau*Sigma)^-1
-    is not, so the posterior pools each view's information across correlated
-    assets. That is ordinary Bayesian updating, not a defect, but it means the
-    configured confidence is not a per-asset guarantee in the shipped default
-    configuration. This test pins the boundary so the limitation cannot be
-    documented away again.
+    Omega is diagonal by construction, so each view realises its configured
+    fraction only when the views' projections are uncorrelated under the prior.
+    That covers a single view, and the identity block over a diagonal Sigma. It
+    fails as soon as two view rows touch the same asset, even when Sigma itself
+    is diagonal, and it fails for the identity block over a correlated Sigma,
+    which is the shipped default. The posterior is pooling information across
+    correlated evidence, which is ordinary Bayesian updating rather than a
+    defect, but it is not a per-view guarantee. This test pins all four corners
+    of that boundary so the limitation cannot be documented away again.
     """
     correlated = np.array(
         [[4.0e-4, 3.4e-4, 1.0e-5], [3.4e-4, 4.0e-4, 1.0e-5], [1.0e-5, 1.0e-5, 9.0e-4]]
@@ -266,6 +269,86 @@ def test_stacked_views_are_calibrated_only_when_sigma_is_diagonal() -> None:
         row = np.zeros(3)
         row[i] = 1.0
         assert _realised_confidence(correlated, pi, row, c) == pytest.approx(c, abs=1e-4)
+
+    # A diagonal Sigma is NOT sufficient on its own: overlapping pick rows
+    # correlate the view projections even when the assets are uncorrelated.
+    overlapping = np.vstack([np.eye(3), [1.0, -1.0, 0.0]])
+    omega = diagonal_omega_from_confidence(diagonal, overlapping, tau=0.05, confidence=c)
+    q_ov = overlapping @ q
+    mu_ov, _ = black_litterman_posterior(
+        pi, diagonal, overlapping, q_ov, tau=0.05, omega=omega
+    )
+    realised_ov = (overlapping @ mu_ov - overlapping @ pi) / (q_ov - overlapping @ pi)
+    assert np.abs(realised_ov - c).max() > 0.1, (
+        "overlapping pick rows over a diagonal Sigma should break per-view calibration"
+    )
+
+
+# ---------------------------------------------------------------------------
+# relative_ridge degenerate paths
+# ---------------------------------------------------------------------------
+
+
+def test_relative_ridge_scales_each_entry_by_its_own_variance() -> None:
+    cov = np.diag([4e-4, 9e-4])
+    np.testing.assert_allclose(relative_ridge(cov, 1e-6), [4e-10, 9e-10])
+
+
+@pytest.mark.parametrize(
+    ("diag", "expected_unusable_scale"),
+    [
+        ([4e-4, 0.0, 3e-4], (4e-4 + 0.0 + 3e-4) / 3.0),
+        ([4e-4, np.nan, 3e-4], 1.0),
+        ([4e-4, np.inf, 3e-4], 1.0),
+        ([0.0, 0.0, 0.0], 1.0),
+    ],
+    ids=["one-zero", "nan", "inf", "all-zero"],
+)
+def test_relative_ridge_fallback_for_unusable_entries(
+    diag: list[float], expected_unusable_scale: float
+) -> None:
+    """An unusable entry takes the mean of ALL absolute diagonal entries.
+
+    When that mean is itself unusable (all-zero, or any NaN/inf present) the
+    helper falls back to an absolute ridge. Pinning this exactly, because the
+    README describes it and a plausible simplification of relative_ridge leaves
+    every other test green while making an all-zero covariance raise.
+    """
+    cov = np.diag(np.asarray(diag, dtype=float))
+    result = relative_ridge(cov, 1e-6)
+    unusable = ~(np.isfinite(np.abs(np.diag(cov))) & (np.abs(np.diag(cov)) > 0.0))
+    assert result[unusable] == pytest.approx(expected_unusable_scale * 1e-6)
+    assert np.isfinite(result).all()
+    assert (result > 0).all()
+
+
+@pytest.mark.parametrize(
+    "cov",
+    [
+        np.zeros((3, 3)),
+        np.array([[4e-4, 4e-4, 0.0], [4e-4, 4e-4, 0.0], [0.0, 0.0, 3e-4]]),
+        np.diag([4e-4, 0.0, 3e-4]),
+    ],
+    ids=["all-zero", "exactly-singular", "one-zero-variance"],
+)
+def test_long_only_weights_survive_degenerate_covariance(cov: np.ndarray) -> None:
+    """The solver uses np.linalg.solve, so the ridge must keep cov invertible."""
+    from portfolio_bl.models.mean_variance import long_only_markowitz_weights
+
+    mu = pd.Series([1e-4, 5e-5, 2e-5], index=TICKERS)
+    weights = long_only_markowitz_weights(
+        mu, pd.DataFrame(cov, index=TICKERS, columns=TICKERS)
+    )
+    assert np.isfinite(weights.to_numpy()).all()
+    assert weights.sum() == pytest.approx(1.0)
+    assert (weights >= 0).all()
+
+
+def test_mean_diagonal_fallback() -> None:
+    assert mean_diagonal(np.zeros((2, 2))) == 1.0
+    assert mean_diagonal(np.zeros((2, 2)), fallback=7.0) == 7.0
+    assert mean_diagonal(np.diag([2.0, 4.0])) == pytest.approx(3.0)
+    assert mean_diagonal(np.empty((0, 0))) == 1.0
 
 
 def test_realised_confidence_is_exact_without_the_ridge() -> None:

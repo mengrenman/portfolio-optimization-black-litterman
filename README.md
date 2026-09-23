@@ -61,7 +61,7 @@ portfolio-optimization-black-litterman/
     data/                    # Disclosure + price loaders
     models/                  # BL posterior, pick-matrix views, mean-variance logic
     pipeline.py              # End-to-end experiment runner
-  tests/                     # Unit + integration tests (122 tests)
+  tests/                     # Unit + integration tests (132 tests)
 ```
 
 ## Input Data Schemas
@@ -240,13 +240,16 @@ other two rather than an independent third model.
 > **The confidence axis is calibrated for a single view.** Earlier versions added a fixed absolute `1e-6` to
 > the view-uncertainty matrix. That matrix holds per-period variances: across all 270
 > estimation windows an absolute view's entry spans `5e-8` to `7e-4`, and a relative view
-> between two similar bond funds goes lower still, down to `2.5e-8` for BND against VGIT.
-> The fixed constant therefore ranged from negligible at the top of that range to 41 times
+> between two similar bond funds goes lower still, down to `1.9e-8` for BND against VGIT.
+> The fixed constant therefore ranged from negligible at the top of that range to 51 times
 > the quantity it was meant to stabilise at the bottom, and the confidence a user configured
 > was not the one they got: a configured 0.65 realised as 0.14 for MUB and 0.64 for UNG. The
-> regularisation is now proportional to each asset's own variance, so for a single view the
-> realised value equals the configured one for every asset to within `2e-6`, and exactly when
-> the ridge is disabled. The sweep above stacks one view per asset, where per-asset
+> regularisation is now proportional to each asset's own variance, so a single absolute view
+> realises its configured value for every asset to within `2e-6`, and exactly when the ridge
+> is disabled. A single *relative* view between two highly correlated assets is looser, since
+> `Omega` is derived from the unregularised covariance while the posterior uses the
+> regularised one: the error grows roughly as `ridge / (1 - rho)`, reaching `2e-5` at a
+> correlation of 0.99. The sweep above stacks one view per asset, where per-asset
 > calibration does not hold and `c` acts as a dial on the set of views rather than a per-asset
 > guarantee; see [Methodology](#methodology). The figures above are post-fix; the correction
 > moved the Trump mean-variance Sharpe from 0.85 to 0.80, that case study having the
@@ -342,22 +345,28 @@ Each view's uncertainty is its own prior variance under the model, scaled by `(1
 approaches 0, the view is ignored. `Omega` is diagonal by construction, so view errors are
 assumed independent even when two views overlap on the same asset.
 
-**What `c` does and does not promise.** For a *single* view, the posterior moves exactly the
-fraction `c` of the way from the prior to that view, and it does so regardless of the asset's
-volatility: a lone view set to 0.65 lands 65% of the way there whether it names a municipal
-bond fund or a meme stock. The same holds for any number of views when `Sigma` is diagonal.
+**What `c` does and does not promise.** Each view realises exactly the fraction `c` when
+`P(tau*Sigma)P'` is diagonal, that is when the views' projections are uncorrelated under the
+prior. `Omega` is diagonal by construction, so that is precisely the condition under which it
+can match the prior term view by view. Two cases satisfy it: a *single* view, where the
+posterior moves exactly `c` of the way regardless of the asset's volatility, so a lone view
+set to 0.65 lands 65% of the way there whether it names a municipal bond fund or a meme
+stock; and the identity block of sample-mean views over a diagonal `Sigma`.
 
-It does **not** hold per asset once several views are active over a correlated `Sigma`, which
-is the shipped default, because `use_sample_mean_views: true` stacks one view per asset. There
-`Omega` is diagonal while `(tau*Sigma)^-1` is not, so the posterior pools each view's
-information across correlated assets. Measured on the last Buffett window at a configured
-0.65, the per-asset fraction ranges from -2.64 to 2.16: some assets move away from their own
-view because a correlated neighbour's view outweighs it. That is ordinary Bayesian updating
-with correlated evidence rather than a defect, and forcing `Sigma` diagonal returns every
-asset to exactly 0.65. But it does mean "0.65 means 65% of the way for this asset" is the
-wrong mental model in the default configuration. Read `c` there as a dial on how much the
-views as a set move the posterior, not as a per-asset guarantee. Idzorek's method, which
-solves for the `Omega` that achieves a target tilt, is the standard way to recover a per-view
+It does **not** hold in the shipped default, where `use_sample_mean_views: true` stacks one
+view per asset over a correlated `Sigma`. Measured on the last Buffett estimation window at a
+configured 0.65, the per-asset fraction runs from -0.23 to 3.48: some assets overshoot their
+view several times over, and others move away from it because a correlated neighbour's view
+outweighs it. Nor does a diagonal `Sigma` rescue it once two pick rows touch the same asset,
+which is what happens as soon as you add an explicit view on a ticker the sample-mean block
+already covers. With `Sigma = diag(4e-4, 4e-4, 9e-4)` and one relative row stacked under the
+identity block, the realised fractions are 0.79, 0.79, 0.65 and 0.79 against a configured 0.65.
+
+This is ordinary Bayesian updating with correlated evidence rather than a defect: the
+posterior is pooling what the views jointly say. But it does mean "0.65 means 65% of the way
+for this asset" is the wrong mental model outside the two cases above. Read `c` there as a
+dial on how much the views as a set move the posterior. Idzorek's method, which solves for
+the `Omega` that achieves a target tilt, is the standard way to recover a per-view
 interpretation under stacking; it is not implemented here.
 
 **4. The default views are the trailing sample means.** With `use_sample_mean_views: true`
@@ -429,10 +438,11 @@ changes the model's behaviour with the data frequency; scaling each entry by its
 makes the weights invariant to that choice. And within one universe, variances can span
 orders of magnitude, so a single matrix-wide constant is negligible for a volatile equity and
 dominant for a bond fund. Scaling per entry keeps the perturbation proportionate. An entry
-whose variance is zero or not finite falls back to the mean of the usable diagonal entries, so
-an exactly singular covariance is still regularised. When *no* diagonal entry is usable, as in
-an all-zero covariance, there is no scale to infer and the helper falls back to an absolute
-`ridge`, which is the one case where the old behaviour is retained.
+whose variance is zero or not finite falls back to the mean of *all* the absolute diagonal
+entries, zeros included, so an exactly singular covariance is still regularised. When that
+mean is itself unusable, which happens for an all-zero diagonal and whenever any entry is NaN
+or infinite, the helper falls back to an absolute `ridge`. Those are the only cases where the
+old behaviour is retained.
 
 ## Backtest Semantics
 
@@ -711,7 +721,7 @@ these outputs and the report template are **not** tracked by git, while `data/` 
 ## Development
 
 ```bash
-pytest -q                       # 122 tests, about 2 seconds
+pytest -q                       # 132 tests, about 2 seconds
 ruff check src tests scripts    # linting
 python scripts/make_figures.py  # regenerate docs/figures/ (needs matplotlib)
 ```
@@ -728,11 +738,11 @@ broken by refreshing the price data.
 
 | File | Tests | Covers |
 |---|---:|---|
-| `tests/test_black_litterman.py` | 12 | Equilibrium returns, omega, posterior, long-only weights |
+| `tests/test_black_litterman.py` | 19 | Equilibrium returns, omega, posterior, long-only weights |
 | `tests/test_data_loaders.py` | 15 | Disclosure and price loading, cleaning, return matrix |
 | `tests/test_metrics.py` | 20 | Frequency inference and every performance metric |
 | `tests/test_pipeline_smoke.py` | 9 | End-to-end runs and config error paths |
-| `tests/test_views.py` | 35 | Views, pick-matrix construction, config parsing, ridge calibration |
+| `tests/test_views.py` | 69 | Views, pick-matrix construction, config parsing, ridge calibration |
 
 `ruff` currently reports 15 findings, all pre-existing and cosmetic: import ordering, three
 unused imports in the older test modules, unsorted `__all__` lists, a deprecated import path,
