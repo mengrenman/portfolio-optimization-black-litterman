@@ -238,10 +238,12 @@ other two rather than an independent third model.
 
 
 > **The confidence axis is calibrated for a single view.** Earlier versions added a fixed absolute `1e-6` to
-> the view-uncertainty matrix. Because that matrix holds per-period variances spanning
-> roughly `7e-8` to `6e-5` on these universes, the constant ranged from negligible to 41
-> times the quantity it was meant to stabilise, and the confidence a user configured was not
-> the one they got: a configured 0.65 realised as 0.14 for MUB and 0.64 for UNG. The
+> the view-uncertainty matrix. That matrix holds per-period variances: across all 270
+> estimation windows an absolute view's entry spans `5e-8` to `7e-4`, and a relative view
+> between two similar bond funds goes lower still, down to `2.5e-8` for BND against VGIT.
+> The fixed constant therefore ranged from negligible at the top of that range to 41 times
+> the quantity it was meant to stabilise at the bottom, and the confidence a user configured
+> was not the one they got: a configured 0.65 realised as 0.14 for MUB and 0.64 for UNG. The
 > regularisation is now proportional to each asset's own variance, so for a single view the
 > realised value equals the configured one for every asset to within `2e-6`, and exactly when
 > the ridge is disabled. The sweep above stacks one view per asset, where per-asset
@@ -426,9 +428,11 @@ returns, whose variances sit near `1e-4`, than for monthly or annual ones, so it
 changes the model's behaviour with the data frequency; scaling each entry by its own variance
 makes the weights invariant to that choice. And within one universe, variances can span
 orders of magnitude, so a single matrix-wide constant is negligible for a volatile equity and
-dominant for a bond fund. Scaling per entry keeps the perturbation proportionate. Entries
-whose variance is zero fall back to the matrix's mean diagonal, so an exactly singular or
-all-zero covariance is still regularised.
+dominant for a bond fund. Scaling per entry keeps the perturbation proportionate. An entry
+whose variance is zero or not finite falls back to the mean of the usable diagonal entries, so
+an exactly singular covariance is still regularised. When *no* diagonal entry is usable, as in
+an all-zero covariance, there is no scale to infer and the helper falls back to an absolute
+`ridge`, which is the one case where the old behaviour is retained.
 
 ## Backtest Semantics
 
@@ -523,8 +527,8 @@ rebalance gives:
 | Pelosi | Black-Litterman | 0.93 | 0.91 | 0.88 | 0.84 |
 | Trump | mean-variance | 0.80 | 0.76 | 0.71 | 0.62 |
 
-Costs move every comparison in the static book's favour, because the overlays turn over 27
-to 36 percent a month while the disclosed book reports zero. They do not overturn the
+Costs move every comparison in the static book's favour, because the overlays turn over 26
+to 37 percent a month while the disclosed book reports zero. They do not overturn the
 ordering within any case study.
 
 **The prior is the book, not the market.** As described under Methodology, `pi` is implied
