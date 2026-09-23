@@ -61,7 +61,7 @@ portfolio-optimization-black-litterman/
     data/                    # Disclosure + price loaders
     models/                  # BL posterior, pick-matrix views, mean-variance logic
     pipeline.py              # End-to-end experiment runner
-  tests/                     # Unit + integration tests (132 tests)
+  tests/                     # Unit + integration tests (136 tests)
 ```
 
 ## Input Data Schemas
@@ -346,8 +346,9 @@ approaches 0, the view is ignored. `Omega` is diagonal by construction, so view 
 assumed independent even when two views overlap on the same asset.
 
 **What `c` does and does not promise.** Each view realises exactly the fraction `c` when
-`P(tau*Sigma)P'` is diagonal, that is when the views' projections are uncorrelated under the
-prior. `Omega` is diagonal by construction, so that is precisely the condition under which it
+`P(tau*Sigma)P'` is diagonal *with strictly positive entries*, that is when the views'
+projections are uncorrelated under the prior and each one carries some prior variance of its
+own. `Omega` is diagonal by construction, so that is precisely the condition under which it
 can match the prior term view by view. Two cases satisfy it: a *single* view, where the
 posterior moves exactly `c` of the way regardless of the asset's volatility, so a lone view
 set to 0.65 lands 65% of the way there whether it names a municipal bond fund or a meme
@@ -368,6 +369,23 @@ for this asset" is the wrong mental model outside the two cases above. Read `c` 
 dial on how much the views as a set move the posterior. Idzorek's method, which solves for
 the `Omega` that achieves a target tilt, is the standard way to recover a per-view
 interpretation under stacking; it is not implemented here.
+
+Two edge cases sit outside the guarantee and are handled explicitly rather than silently.
+
+- **A view with no prior variance of its own.** If `diag(P(tau*Sigma)P')` is zero for some
+  view, that view has no scale from which to derive its uncertainty. This happens for an
+  absolute view on a constant-price series, or a relative view between two perfectly
+  correlated ones. The entry is replaced with the mean of the usable projected variances, or
+  with `tau` times the mean prior variance when no view is usable, and a warning is logged
+  saying the configured confidence cannot be honoured for it. The substitute carries the
+  data's units, so the weights stay invariant to return frequency, but that view ends up
+  effectively ignored, which is the right answer: a zero prior variance is the prior claiming
+  to know that return exactly. No window in the bundled data reaches this path, where the
+  smallest projected variance is `1.9e-8`.
+- **Confidence below `1e-3`.** `c` is clipped to `[1e-3, 1.0]` before `Omega` is built, so a
+  programmatic caller passing a smaller positive value gets `1e-3` rather than an error, and
+  the posterior still moves a little toward that view. The YAML path never reaches the clip:
+  a `View` rejects any confidence outside `(0, 1]` outright.
 
 **4. The default views are the trailing sample means.** With `use_sample_mean_views: true`
 the pipeline stacks one absolute view per asset:
@@ -593,7 +611,7 @@ backtest:
   rebalance_frequency: ME    # Month-end rebalancing
   risk_aversion: 2.5         # λ in π = λΣw_mkt
   tau: 0.05                  # Prior uncertainty scalar
-  view_confidence: 0.65      # BL analyst confidence (0, 1]
+  view_confidence: 0.65      # BL analyst confidence (0, 1]; clipped below at 1e-3
   use_sample_mean_views: true  # stack explicit views on the sample-mean views
 ```
 
@@ -721,7 +739,7 @@ these outputs and the report template are **not** tracked by git, while `data/` 
 ## Development
 
 ```bash
-pytest -q                       # 132 tests, about 2 seconds
+pytest -q                       # 136 tests, about 2 seconds
 ruff check src tests scripts    # linting
 python scripts/make_figures.py  # regenerate docs/figures/ (needs matplotlib)
 ```
@@ -742,7 +760,7 @@ broken by refreshing the price data.
 | `tests/test_data_loaders.py` | 15 | Disclosure and price loading, cleaning, return matrix |
 | `tests/test_metrics.py` | 20 | Frequency inference and every performance metric |
 | `tests/test_pipeline_smoke.py` | 9 | End-to-end runs and config error paths |
-| `tests/test_views.py` | 69 | Views, pick-matrix construction, config parsing, ridge calibration |
+| `tests/test_views.py` | 73 | Views, pick-matrix construction, config parsing, ridge calibration |
 
 `ruff` currently reports 15 findings, all pre-existing and cosmetic: import ordering, three
 unused imports in the older test modules, unsorted `__all__` lists, a deprecated import path,

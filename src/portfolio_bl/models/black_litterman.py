@@ -6,7 +6,7 @@ from collections.abc import Sequence
 import numpy as np
 import pandas as pd
 
-from portfolio_bl.models._numeric import relative_ridge
+from portfolio_bl.models._numeric import mean_diagonal, relative_ridge
 
 logger = logging.getLogger(__name__)
 
@@ -63,10 +63,21 @@ def diagonal_omega_from_confidence(
         tau: Prior uncertainty scalar (typically 0.01–0.10).
         confidence: Either one confidence applied to every view, or a
             sequence of length k with one confidence per view. Values are
-            clipped to [1e-3, 1.0].
+            clipped to ``[1e-3, 1.0]``; a confidence at or below zero is
+            therefore treated as 1e-3 rather than rejected, and the posterior
+            still moves slightly toward such a view.
 
     Returns:
         A diagonal matrix Ω of shape (k × k).
+
+    Notes:
+        A view whose projected prior variance ``diag(P(τΣ)Pᵀ)`` is zero or
+        negative carries no scale of its own. Its entry is replaced with the
+        mean of the usable projected variances, so the substitute still tracks
+        the data's units, and a warning is logged because that view's
+        configured confidence cannot be honoured. This happens for an absolute
+        view on a constant-price series, or a relative view between two
+        perfectly correlated ones.
 
     Raises:
         ValueError: If a per-view confidence sequence does not have exactly
@@ -86,7 +97,26 @@ def diagonal_omega_from_confidence(
 
     projected = p_matrix @ (tau * np.asarray(covariance, dtype=float)) @ p_matrix.T
     diag = np.diag(projected) if n_views > 0 else np.zeros(0, dtype=float)
-    diag = np.where(diag <= 0, 1e-8, diag)
+
+    # A view with no prior variance of its own has no scale to derive Omega
+    # from. Substitute the mean of the usable projected variances rather than
+    # an absolute constant, so the guard carries the data's units and the
+    # weights stay invariant to whether returns are daily, monthly or annual.
+    degenerate = ~(np.isfinite(diag) & (diag > 0.0))
+    if degenerate.any():
+        usable = diag[~degenerate]
+        if usable.size:
+            substitute = float(np.mean(usable))
+        else:
+            # No view carries a usable scale, so take one from the prior itself.
+            substitute = tau * mean_diagonal(np.asarray(covariance, dtype=float))
+        logger.warning(
+            "%d view(s) have a non-positive projected prior variance; substituting %.3e. "
+            "Their configured confidence cannot be honoured.",
+            int(degenerate.sum()),
+            substitute,
+        )
+        diag = np.where(degenerate, substitute, diag)
 
     # Higher confidence -> lower view uncertainty.
     scale = (1.0 - conf) / conf

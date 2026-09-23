@@ -351,6 +351,60 @@ def test_mean_diagonal_fallback() -> None:
     assert mean_diagonal(np.empty((0, 0))) == 1.0
 
 
+def test_degenerate_view_variance_substitute_is_scale_carrying() -> None:
+    """A view with no prior variance must not fall back to an absolute constant.
+
+    Its projected variance carries no scale, so the guard substitutes the mean
+    of the usable projected variances. That keeps the posterior invariant to
+    whether returns are expressed daily, monthly or annually, which an absolute
+    constant did not.
+    """
+    base = np.diag([1e-4, 0.0, 2e-4])
+    pi_base = np.array([1e-3, 0.0, 2e-3])
+    p = np.array([[0.0, 1.0, 0.0]])  # a view on the zero-variance asset
+
+    realised = []
+    for factor in (1.0, 21.0, 252.0):
+        cov = base * factor
+        pi = pi_base * factor
+        q = np.array([pi[1] + 1e-3 * factor])
+        omega = diagonal_omega_from_confidence(cov, p, tau=0.05, confidence=0.65)
+        mu, _ = black_litterman_posterior(pi, cov, p, q, tau=0.05, omega=omega)
+        realised.append((float((p @ mu)[0]) - pi[1]) / (q[0] - pi[1]))
+
+    assert realised[1] == pytest.approx(realised[0], rel=1e-9)
+    assert realised[2] == pytest.approx(realised[0], rel=1e-9)
+
+
+def test_degenerate_view_variance_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """The configured confidence cannot be honoured there, so it is logged."""
+    cov = np.diag([1e-4, 0.0])
+    with caplog.at_level(logging.WARNING, logger="portfolio_bl.models.black_litterman"):
+        omega = diagonal_omega_from_confidence(cov, np.eye(2), tau=0.05, confidence=0.65)
+    assert "non-positive projected prior variance" in caplog.text
+    assert (np.diag(omega) > 0).all()
+
+
+def test_every_view_degenerate_still_produces_a_finite_omega() -> None:
+    """With no usable entry there is nothing to average, so fall back further."""
+    omega = diagonal_omega_from_confidence(
+        np.zeros((2, 2)), np.eye(2), tau=0.05, confidence=0.65
+    )
+    assert np.isfinite(omega).all()
+    assert (np.diag(omega) > 0).all()
+
+
+def test_confidence_below_the_floor_is_clipped_not_rejected() -> None:
+    """Confidence is clipped to [1e-3, 1]; the README documents that floor."""
+    cov = np.diag([1e-4, 2e-4])
+    at_floor = diagonal_omega_from_confidence(cov, np.eye(2), tau=0.05, confidence=1e-3)
+    below = diagonal_omega_from_confidence(cov, np.eye(2), tau=0.05, confidence=1e-9)
+    np.testing.assert_allclose(below, at_floor)
+    # A View still refuses a non-positive confidence outright.
+    with pytest.raises(ValueError, match=r"in \(0, 1\]"):
+        View(assets={"AAPL": 1.0}, annual_return=0.05, confidence=0.0)
+
+
 def test_realised_confidence_is_exact_without_the_ridge() -> None:
     """With the ridge disabled the calibration identity holds exactly."""
     cov = np.diag([1e-8, 1e-2]).astype(float)
