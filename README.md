@@ -26,6 +26,9 @@ Can a Black-Litterman overlay improve portfolio quality relative to:
 - Disclosure quality is source-dependent; conclusions are only as good as the input coverage.
 - This repo is for research only, not investment advice.
 
+See [Assumptions and Limitations](#assumptions-and-limitations) for the modelling choices
+that most affect how the results should be read.
+
 ## Known Model Limitation
 
 The BL posterior assumes multivariate Gaussianity in both returns and views. Equity
@@ -74,6 +77,30 @@ Required columns:
 - `date` (YYYY-MM-DD)
 - `ticker`
 - `close`
+
+## Environment and Setup
+
+Either route works. The conda route creates an isolated environment named `portfolio-bl`
+from `environment.yml`; the pip route installs into an interpreter you already have.
+
+```bash
+# conda
+conda env create -f environment.yml
+conda activate portfolio-bl
+python -m pip install -e '.[dev,notebooks]'
+
+# or pip only, into an existing Python 3.10+ interpreter
+python -m pip install -e '.[dev,notebooks]'
+```
+
+The editable install matters: `pyproject.toml` puts the package under `src/`, and both the
+CLI and the notebooks import `portfolio_bl` by name.
+
+**Nothing here is version-pinned.** `environment.yml` and `pyproject.toml` both specify only
+lower bounds (`python>=3.10`, `numpy>=1.26`, `pandas>=2.1`), so a fresh solve tracks whatever
+is current. The figures in this README were produced on Python 3.14.7 with NumPy 2.5.3 and
+pandas 3.0.5. If you need byte-identical reproduction, pin your own versions; the repo will
+not do it for you.
 
 ## Quick Start
 ```bash
@@ -188,6 +215,280 @@ rather than an independent third model.
 > between similar assets are affected most. Treat the confidence column above as ordinal
 > rather than as a calibrated probability until this is scaled to the matrix.
 
+## Methodology
+
+What the three strategies actually compute. All of it lives in `src/portfolio_bl/models/`
+and `src/portfolio_bl/pipeline.py`.
+
+### The estimation window
+
+Every model quantity comes from one rolling window of daily arithmetic returns.
+
+- Returns are `pct_change()` on the pivoted adjusted-close matrix, so `mu`, `Sigma`, `pi`
+  and `q` are all in **daily** units. Nothing is annualised before the optimiser;
+  annualisation happens only in the metrics layer.
+- Rebalance dates are the last trading day of each month (`rebalance_frequency: ME`).
+- `lookback_periods: 6` counts **rebalance intervals, not rows**. The training slice runs
+  from the month-end six rebalances earlier up to, but excluding, the current one, which is
+  122 to 129 trading days on the bundled data.
+- The first six month-ends are warm-up, leaving **90 rebalances** per case study.
+- `estimate_mean_cov` takes the plain sample mean and sample covariance of that slice. No
+  shrinkage, no exponential weighting, no factor structure.
+- Any ticker with even one missing return inside the window is dropped from that window and
+  carries zero weight there. On the bundled data this affects two case studies: Trump loses
+  DJT from 45 of 90 windows, and Pelosi loses RBLX from 38, CRWD from 17 and DBX from 2.
+
+### `disclosed`
+
+Weights are `value_usd / value_usd.sum()` at the person's latest `as_of_date`, restricted to
+tickers that also have price history, then renormalised. The same vector is returned at
+every rebalance.
+
+### `mean_variance`
+
+`mu` and `Sigma` from the window, passed straight to `long_only_markowitz_weights`. The
+`risk_aversion` setting is never read on this path.
+
+### `black_litterman`
+
+**1. The equilibrium prior.** `implied_equilibrium_returns` computes
+
+```
+pi = lambda * Sigma * w_mkt
+```
+
+where `lambda` is `backtest.risk_aversion` and `w_mkt` is **the disclosed portfolio weights,
+renormalised over the tickers with data in this window**, not true market-capitalisation
+weights. This is the single most consequential modelling choice in the repo. Textbook
+Black-Litterman asks what returns would make *the market* efficient; this asks what returns
+would make *this person's book* efficient. The prior is therefore the disclosed portfolio
+itself, and the posterior blends the disclosed book with the views rather than the market
+with the views.
+
+The direct consequence is that **with no views the model returns the disclosed portfolio.**
+The posterior collapses to `mu_BL = pi` and `Sigma_BL = (1 + tau) * Sigma`, and the solver's
+unconstrained step is then proportional to `w_mkt`, which survives renormalisation.
+
+**2. The posterior.** `black_litterman_posterior` implements
+
+```
+M        = inv(tau * Sigma) + P' * inv(Omega) * P
+mu_BL    = inv(M) * ( inv(tau * Sigma) * pi  +  P' * inv(Omega) * q )
+Sigma_BL = Sigma + inv(M)
+```
+
+- `Sigma` (n x n): window sample covariance, plus `ridge * I` with `ridge = 1e-6`.
+- `P` (k x n): the pick matrix, one row per view.
+- `q` (k,): the per-period return each view asserts for its row of `P`.
+- `Omega` (k x k): view uncertainty. Larger entries mean a less trusted view.
+- `tau` (`0.05`): scales the prior mean's uncertainty as `tau * Sigma`.
+
+Inverses are `np.linalg.pinv`, not `solve`. `mu_BL` is a precision-weighted average of `pi`
+and `q`. `Sigma_BL` is always larger than `Sigma`, because parameter uncertainty is added to
+the risk estimate rather than subtracted from it.
+
+**3. `Omega` from a confidence scalar.** Instead of asking for a covariance,
+`diagonal_omega_from_confidence` derives one from a confidence `c` in `(0, 1]`:
+
+```
+Omega = diag( diag( P (tau * Sigma) P' ) * (1 - c) / c )
+```
+
+Each view's uncertainty is its own prior variance under the model, scaled by `(1-c)/c`. At
+`c = 0.5` that factor is exactly 1. As `c` approaches 1, `Omega` goes to zero; as `c`
+approaches 0, the view is ignored. `Omega` is diagonal by construction, so view errors are
+assumed independent even when two views overlap on the same asset. See the caveat under
+[Selected Results](#selected-results) for how the fixed ridge distorts the realised
+confidence.
+
+**4. The default views are the trailing sample means.** With `use_sample_mean_views: true`
+the pipeline stacks one absolute view per asset:
+
+```
+P = I (n x n)     q = mu, the lookback sample mean per asset     c = view_confidence
+```
+
+Out of the box the "analyst view" is simply the last six months of realised average return,
+asserted asset by asset. That is why the strategy behaves as a tunable blend of `disclosed`
+(the prior) and `mean_variance` (the views), and why raising confidence on this data hurts:
+it means trusting a six-month trailing mean more. Explicit YAML views are appended as extra
+rows below the identity block.
+
+### Two parameters that do less than they appear to
+
+**`risk_aversion` does not affect the final weights.** `long_only_markowitz_weights`
+renormalises to sum 1, and any positive rescaling of expected returns cancels in that step.
+Multiplying `mu` by 0.5, 2.5 or 10 returns bit-identical weights. `lambda` scales `pi`, so
+it too washes out. It changes the reported weights only through second-order interactions
+with the absolute ridge.
+
+**`tau` cancels out of the posterior mean entirely.** Because `Omega` is derived from the
+same `tau * Sigma`, `tau` appears on both sides and drops out: with the ridge removed,
+`mu_BL` is identical to machine precision for `tau = 0.005` and `tau = 5`. It reaches the
+weights only through `Sigma_BL = Sigma + inv(M)`. End to end on the Buffett case, moving
+`tau` from 0.05 to 0.5 shifts individual weights by at most 0.03, and to 5.0 by at most 0.43.
+Treat `tau` as a knob on the posterior covariance, not on how strongly views are applied.
+Use `view_confidence` for that.
+
+### The long-only step is a projection, not a constrained optimum
+
+Both optimisers finish in `long_only_markowitz_weights`:
+
+```python
+cov_reg = cov + np.eye(len(tickers)) * ridge
+raw = np.linalg.solve(cov_reg, mu)   # unconstrained: w proportional to inv(Sigma) mu
+raw = np.clip(raw, 0.0, None)        # shorts clipped to zero
+weights = raw / raw.sum()            # renormalise to sum 1
+```
+
+The system is solved with **no sign constraint and no budget constraint**. Negative entries
+are then clipped and the survivors rescaled. That is a heuristic projection onto the
+long-only simplex, not a solution of the constrained problem, and the two are not the same.
+On a four-asset test case the projection returns a spread portfolio with mean-variance
+utility 0.0626 where the true constrained optimum is a corner solution worth 0.0800. Read
+the weights as "a long-only portfolio derived from the unconstrained solution", not as "the
+optimal long-only portfolio".
+
+An equal-weight fallback fires if the clipped weights sum to zero or less. It never triggers
+on the bundled data across all 270 strategy-rebalances.
+
+## Backtest Semantics
+
+The behaviour of `src/portfolio_bl/backtest/engine.py` and `metrics.py`. Figures are for the
+shipped configuration on the bundled data.
+
+### The walk-forward loop
+
+At each eligible rebalance date the engine slices the preceding lookback window, calls the
+strategy's weight function, and holds the result until the next rebalance. Rebalance dates
+that do not appear in the return index are dropped silently. A date is eligible once six
+rebalance dates precede it, which is why each case study yields 90 rebalances rather than 96.
+
+### No look-ahead
+
+Weights computed at a rebalance date are applied **from the next trading day**, never to the
+decision bar itself. The training slice also excludes the decision bar. A strategy can
+therefore never trade on the return it is about to earn. This is why the reported backtest
+begins on 2018-08-01 rather than at the first price date of 2018-01-02: the first six
+month-ends are consumed as warm-up.
+
+One consequence worth knowing: `weight_history` is indexed by the **decision** date, not by
+the date the weights took effect.
+
+### Between rebalances the book is re-set every day
+
+The engine computes each day's portfolio return as `w . r_t` using the same `w` until the
+next rebalance. That is a constant-mix portfolio rebalanced back to target **every trading
+day**, not a buy-and-hold of those weights. Drift is never allowed to accumulate. The
+difference is material where one position dominates:
+
+| Person | `disclosed` as run (daily constant mix) | Same weights, bought and held |
+|---|---:|---:|
+| Buffett | 17.5% return, 0.75 Sharpe | 17.3%, 0.74 |
+| Pelosi | 27.9%, 1.01 | 31.1%, 1.04 |
+| Trump | 7.5%, 0.05 | 3.7%, 0.03 |
+
+Trump is the instructive case: re-setting daily keeps buying back into DJT as it falls,
+which flatters the return by 3.8 points a year against simply holding.
+
+Turnover is computed from `weight_history`, which only records rebalance dates, so these
+daily re-weighting trades are invisible to it. The `disclosed` strategy's 0.0% turnover
+means "the target weights never change", not "no trading occurs".
+
+### Missing data
+
+Two different mechanisms handle gaps, and they interact:
+
+- **In estimation**, any column with a NaN anywhere in the window is dropped, so the ticker
+  gets zero weight that period.
+- **In the return accumulation**, a missing return is filled with `0.0`.
+
+A ticker that has not listed yet therefore behaves like uncompensated cash: it neither gains
+nor loses, but it still occupies its share of the portfolio. For the Trump case study, DJT
+is 91% of the disclosed book and does not trade until 2021-09-30, so the `disclosed` curve
+sits nearly flat for years before inheriting the ticker's swings. The optimisers cannot hold
+DJT until the 2022-04-29 rebalance, the first with a complete lookback window.
+
+### Metrics
+
+- `periods_per_year` is inferred from the median gap between dates, resolving to 252 here.
+- Annualised return is **geometric**; annualised volatility is the sample standard deviation
+  scaled by the square root of `periods_per_year`.
+- Sharpe and Sortino both assume a **zero risk-free rate**.
+- Sortino returns NaN rather than infinity when a series has no negative returns, which keeps
+  CSV output well defined.
+- HHI is the sum of squared weights, averaged over rebalances. `1/n` is equal weight, `1.0`
+  is a single position.
+- Turnover is half the sum of absolute weight changes between consecutive rebalances,
+  averaged. It is **measured but never charged**: no transaction costs enter the returns.
+
+## Assumptions and Limitations
+
+Beyond the caveats above, these are the choices most likely to mislead a reader of the
+results. Each was verified against the bundled data.
+
+**The disclosed benchmark is selected by hindsight.** One snapshot is held across the whole
+backtest: Buffett's is dated 2025-12-31 and the other two 2024-12-31, against a window that
+opens in August 2018. The constituents are therefore known to have survived to the snapshot
+date, and positions closed earlier never appear. The `disclosed` column is an upper bound
+contaminated by look-ahead, not a fair competitor. The same selection flows into the other
+two strategies, which optimise within that same surviving universe.
+
+**Nothing is charged for trading.** No transaction costs, slippage, taxes, borrow or
+financing appear anywhere. Charging a plausible cost against measured turnover at each
+rebalance gives:
+
+| Case | Strategy | 0 bp | 10 bp | 25 bp | 50 bp |
+|---|---|---:|---:|---:|---:|
+| Buffett | mean-variance | 0.50 | 0.48 | 0.44 | 0.39 |
+| Buffett | Black-Litterman | 0.68 | 0.66 | 0.63 | 0.58 |
+| Pelosi | Black-Litterman | 0.93 | 0.92 | 0.89 | 0.85 |
+| Trump | mean-variance | 0.85 | 0.82 | 0.77 | 0.70 |
+
+Costs move every comparison in the static book's favour, because the overlays turn over 25
+to 36 percent a month while the disclosed book reports zero. They do not overturn the
+ordering within any case study.
+
+**The prior is the book, not the market.** As described under Methodology, `pi` is implied
+from the disclosed weights. These are not market equilibrium returns in the Black-Litterman
+sense, and they should not be read as such.
+
+**The covariance estimate is thin.** Each window holds about 126 daily rows against a
+covariance with `n(n+1)/2` free parameters:
+
+| Case | Assets | Rows per parameter | Median condition number |
+|---|---:|---:|---:|
+| Buffett | 14 | 1.20 | 89 |
+| Pelosi | 22 | 0.50 | 145 |
+| Trump | 15 | 1.05 | 15,329 |
+
+Pelosi's estimate is under-determined outright, and Trump's is badly conditioned because a
+highly volatile single name sits alongside bond funds. Shrinking a noisy sample estimate
+toward a structured prior is exactly the problem Black-Litterman exists to address, which
+makes these ratios context for the results rather than a reason to discard them.
+
+**Disclosed values are range tiers, not exact holdings.** House and OGE filings report bands,
+and the loader uses midpoints. The one exception matters: DJT is reported as "over $50M" and
+enters at the lower bound of $50,000,000. Its 91% weight in the Trump book is therefore an
+artefact of that convention as much as a fact about the portfolio, and every Trump figure
+inherits that choice.
+
+**Sharpe and Sortino assume a zero risk-free rate.** Over a window containing the 2022-2023
+tightening cycle, that flatters every strategy's ratio in absolute terms, though it does not
+change rankings within a case study.
+
+**No statistical significance is computed anywhere.** There are no standard errors, no
+bootstrap, and no significance tests. With 90 rebalances on a single historical path and
+three portfolios, differences of a few hundredths of a Sharpe point should not be read as
+evidence that one method beats another.
+
+**`prices.csv` is a snapshot.** The refresh script in `data/raw/prices/README.md` passes no
+end date, so re-running it extends coverage to the current day and changes the backtest
+window, the rebalance dates and every figure in this README.
+
+**The realised view confidence is not the configured one.** See the caveat under
+[Selected Results](#selected-results).
+
 ## Configuration
 
 All backtest and model hyper-parameters live in `configs/case_studies.yaml`:
@@ -301,6 +602,51 @@ Both input datasets now use real data.
 | `data/raw/prices/prices.csv` | Yahoo Finance via yfinance (`auto_adjust=True`) | 46 tickers, 2018-01-02 → 2025-12-30, ~90k rows |
 
 To refresh prices with the latest data, see `data/raw/prices/README.md`.
+
+## Output Files
+
+`python scripts/run_case_study.py --person <key>` writes five CSVs to
+`reports/output/<key>/`. Shapes below are for the Buffett case study.
+
+| File | Shape | Index | Contents |
+|---|---|---|---|
+| `summary.csv` | 3 x 8 | `strategy` | One row per strategy, seven metric columns |
+| `equity_curve.csv` | 1,864 x 4 | date | Cumulative NAV per strategy, starting at 1.0 |
+| `strategy_returns.csv` | 1,864 x 4 | date | Daily portfolio return per strategy |
+| `weights_<strategy>.csv` | 90 x 15 | `rebalance_date` | Weights per ticker at each rebalance |
+| `metadata.csv` | 4 x 2 | key | Person label, snapshot date, asset count, universe |
+
+All values are raw decimals, not percentages: `0.17535...` in `summary.csv` is 17.5%, and
+`max_drawdown` is negative. The weight files carry genuine zeros, since the long-only
+projection drops a large share of the universe in most windows.
+
+Two traps worth repeating. `weights_<strategy>.csv` is indexed by the rebalance **decision**
+date, one trading day before those weights take effect. And `reports/` is gitignored, so
+these outputs and the report template are **not** tracked by git, while `data/` is.
+
+## Development
+
+```bash
+pytest -q                       # 110 tests, about 2 seconds
+ruff check src tests scripts    # linting
+```
+
+The suite is entirely self-contained: every fixture is synthetic and written to a temporary
+directory, so the tests never read `data/raw/` or `configs/case_studies.yaml` and cannot be
+broken by refreshing the price data.
+
+| File | Tests | Covers |
+|---|---:|---|
+| `tests/test_black_litterman.py` | 12 | Equilibrium returns, omega, posterior, long-only weights |
+| `tests/test_data_loaders.py` | 15 | Disclosure and price loading, cleaning, return matrix |
+| `tests/test_metrics.py` | 20 | Frequency inference and every performance metric |
+| `tests/test_pipeline_smoke.py` | 9 | End-to-end runs and config error paths |
+| `tests/test_views.py` | 29 | Views, pick-matrix construction, view config parsing |
+
+`ruff` currently reports 15 findings, all pre-existing and cosmetic: import ordering, three
+unused imports in the older test modules, unsorted `__all__` lists, a deprecated import path,
+a non-executable shebang, and one exception-type preference that is deliberate. Thirteen are
+auto-fixable with `--fix`. None touch model logic.
 
 ## Current Status and Next Steps
 - Extend benchmark/factor set (e.g. factor-model attribution against Fama-French).
