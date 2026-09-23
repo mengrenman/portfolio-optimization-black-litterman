@@ -74,10 +74,17 @@ def diagonal_omega_from_confidence(
         A view whose projected prior variance ``diag(P(τΣ)Pᵀ)`` is zero or
         negative carries no scale of its own. Its entry is replaced with the
         mean of the usable projected variances, so the substitute still tracks
-        the data's units, and a warning is logged because that view's
-        configured confidence cannot be honoured. This happens for an absolute
+        the data's units, and a warning is logged. This happens for an absolute
         view on a constant-price series, or a relative view between two
         perfectly correlated ones.
+
+        Such a view does **not** realise its configured fraction ``c``: the
+        posterior mean moves only ``ridge * c/(1-c)`` of the way toward it.
+        That is not the same as the view being ignored. The asset's posterior
+        variance is ridge-sized too, and a mean-variance optimiser takes the
+        ratio, so the two cancel and ``c`` remains a powerful dial on the
+        allocation. A zero-variance asset is risk-free, and asserting a
+        positive return for it will pull most of the portfolio into it.
 
     Raises:
         ValueError: If a per-view confidence sequence does not have exactly
@@ -112,7 +119,8 @@ def diagonal_omega_from_confidence(
             substitute = tau * mean_diagonal(np.asarray(covariance, dtype=float))
         logger.warning(
             "%d view(s) have a non-positive projected prior variance; substituting %.3e. "
-            "Their configured confidence cannot be honoured.",
+            "Their confidence no longer maps to the documented fraction, and because such "
+            "an asset is risk-free the view may pull most of the portfolio into it.",
             int(degenerate.sum()),
             substitute,
         )

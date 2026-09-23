@@ -376,6 +376,45 @@ def test_degenerate_view_variance_substitute_is_scale_carrying() -> None:
     assert realised[2] == pytest.approx(realised[0], rel=1e-9)
 
 
+def test_degenerate_view_still_drives_the_allocation() -> None:
+    """A degenerate view is NOT ignored, whatever the posterior mean suggests.
+
+    The posterior mean barely moves, which is easy to check and misleading. The
+    asset's posterior variance is ridge-sized too, and the optimiser takes the
+    ratio, so confidence stays a powerful dial on the weight. Pinned because an
+    earlier version of the docs claimed such a view was effectively ignored.
+    """
+    from portfolio_bl.models.mean_variance import long_only_markowitz_weights
+
+    cov = np.diag([1e-4, 0.0, 2e-4])
+    pi = implied_equilibrium_returns(
+        pd.DataFrame(cov, index=TICKERS, columns=TICKERS),
+        pd.Series([0.4, 0.2, 0.4], index=TICKERS),
+        risk_aversion=2.5,
+    )
+    p_row = np.array([[0.0, 1.0, 0.0]])
+    q = np.array([pi[1] + 1e-3])
+
+    def weight_on_degenerate(confidence: float | None) -> float:
+        if confidence is None:
+            mu, post = black_litterman_posterior(
+                pi, cov, np.zeros((0, 3)), np.zeros(0), tau=0.05
+            )
+        else:
+            omega = diagonal_omega_from_confidence(cov, p_row, tau=0.05, confidence=confidence)
+            mu, post = black_litterman_posterior(pi, cov, p_row, q, tau=0.05, omega=omega)
+        weights = long_only_markowitz_weights(
+            pd.Series(mu, index=TICKERS), pd.DataFrame(post, index=TICKERS, columns=TICKERS)
+        )
+        return float(weights.iloc[1])
+
+    assert weight_on_degenerate(None) == pytest.approx(0.0, abs=1e-9)
+    # The view is emphatically not ignored, and confidence orders the outcome.
+    low, high = weight_on_degenerate(0.5), weight_on_degenerate(0.9)
+    assert low > 0.5, f"degenerate view should still attract weight, got {low}"
+    assert high > low, "higher confidence must mean more weight on the asset"
+
+
 def test_degenerate_view_variance_warns(caplog: pytest.LogCaptureFixture) -> None:
     """The configured confidence cannot be honoured there, so it is logged."""
     cov = np.diag([1e-4, 0.0])

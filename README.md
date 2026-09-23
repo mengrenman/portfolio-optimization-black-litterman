@@ -61,7 +61,7 @@ portfolio-optimization-black-litterman/
     data/                    # Disclosure + price loaders
     models/                  # BL posterior, pick-matrix views, mean-variance logic
     pipeline.py              # End-to-end experiment runner
-  tests/                     # Unit + integration tests (136 tests)
+  tests/                     # Unit + integration tests (137 tests)
 ```
 
 ## Input Data Schemas
@@ -374,14 +374,22 @@ Two edge cases sit outside the guarantee and are handled explicitly rather than 
 
 - **A view with no prior variance of its own.** If `diag(P(tau*Sigma)P')` is zero for some
   view, that view has no scale from which to derive its uncertainty. This happens for an
-  absolute view on a constant-price series, or a relative view between two perfectly
-  correlated ones. The entry is replaced with the mean of the usable projected variances, or
-  with `tau` times the mean prior variance when no view is usable, and a warning is logged
-  saying the configured confidence cannot be honoured for it. The substitute carries the
-  data's units, so the weights stay invariant to return frequency, but that view ends up
-  effectively ignored, which is the right answer: a zero prior variance is the prior claiming
-  to know that return exactly. No window in the bundled data reaches this path, where the
-  smallest projected variance is `1.9e-8`.
+  absolute view on a constant-price series such as a money-market fund, or a relative view
+  between two perfectly correlated ones. The entry is replaced with the mean of the usable
+  projected variances, or with `tau` times the mean prior variance when no view is usable,
+  and a warning is logged. The substitute carries the data's units, so the weights stay
+  invariant to return frequency.
+
+  Such a view does **not** realise its configured `c`, and it is also **not** ignored, which
+  is the trap. The posterior *mean* moves only `ridge * c/(1-c)` of the way toward it, so
+  inspecting the mean suggests the view did nothing. But the asset's posterior *variance* is
+  ridge-sized too, and a mean-variance optimiser takes the ratio, so the two cancel and `c`
+  stays a powerful dial on the allocation. On a three-asset example the zero-variance asset
+  goes from a weight of 0.00 with no view to 0.83 at `c = 0.5` and 1.00 at `c = 1`. That is
+  defensible rather than broken: a zero-variance asset is risk-free, and asserting a positive
+  return for it should pull the portfolio in. But read the weights, not the posterior mean.
+  No window in the bundled data reaches this path, where the smallest projected variance is
+  `1.9e-8`.
 - **Confidence below `1e-3`.** `c` is clipped to `[1e-3, 1.0]` before `Omega` is built, so a
   programmatic caller passing a smaller positive value gets `1e-3` rather than an error, and
   the posterior still moves a little toward that view. The YAML path never reaches the clip:
@@ -739,7 +747,7 @@ these outputs and the report template are **not** tracked by git, while `data/` 
 ## Development
 
 ```bash
-pytest -q                       # 136 tests, about 2 seconds
+pytest -q                       # 137 tests, about 2 seconds
 ruff check src tests scripts    # linting
 python scripts/make_figures.py  # regenerate docs/figures/ (needs matplotlib)
 ```
@@ -760,7 +768,7 @@ broken by refreshing the price data.
 | `tests/test_data_loaders.py` | 15 | Disclosure and price loading, cleaning, return matrix |
 | `tests/test_metrics.py` | 20 | Frequency inference and every performance metric |
 | `tests/test_pipeline_smoke.py` | 9 | End-to-end runs and config error paths |
-| `tests/test_views.py` | 73 | Views, pick-matrix construction, config parsing, ridge calibration |
+| `tests/test_views.py` | 74 | Views, pick-matrix construction, config parsing, ridge calibration |
 
 `ruff` currently reports 15 findings, all pre-existing and cosmetic: import ordering, three
 unused imports in the older test modules, unsorted `__all__` lists, a deprecated import path,
