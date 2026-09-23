@@ -99,6 +99,95 @@ Generated outputs include:
 
 All written under `reports/output/<person>/`.
 
+## Selected Results
+
+Every figure below comes from the bundled dataset and the shipped configuration (6-period
+lookback, month-end rebalancing, `view_confidence: 0.65`). Regenerate them with
+`python scripts/run_case_study.py --person <key>`.
+
+### Dataset at a glance
+
+| | |
+|---|---:|
+| Adjusted daily closes | 90,298 rows |
+| Tickers | 46 |
+| Price coverage | 2018-01-02 to 2025-12-30 (2,009 trading days) |
+| Disclosure rows | 51 across 3 people |
+| Backtest window | 2018-08-01 to 2025-12-30 (1,864 days after lookback warm-up) |
+
+### The disclosed portfolios
+
+| Person | Snapshot | Holdings | Largest position | HHI |
+|---|---|---:|---|---:|
+| Warren Buffett | 2025-12-31 | 14 | AXP at 24.6% | 0.136 |
+| Nancy Pelosi | 2024-12-31 | 22 | AAPL at 28.1% | 0.145 |
+| Donald Trump | 2024-12-31 | 15 | DJT at 91.0% | 0.828 |
+
+Every disclosed ticker has price history, so no holding is dropped from any backtest.
+
+### Strategy comparison
+
+| Person | Strategy | Annual return | Annual vol | Sharpe | Max drawdown | Turnover |
+|---|---|---:|---:|---:|---:|---:|
+| Buffett | disclosed | 17.5% | 23.5% | 0.75 | -43.4% | 0.0% |
+| Buffett | mean-variance | 10.7% | 21.4% | 0.50 | -34.9% | 36.0% |
+| Buffett | Black-Litterman | 14.5% | 21.3% | 0.68 | -32.3% | 29.4% |
+| Pelosi | disclosed | 27.9% | 27.6% | 1.01 | -38.9% | 0.0% |
+| Pelosi | mean-variance | 22.7% | 25.1% | 0.90 | -36.7% | 32.0% |
+| Pelosi | Black-Litterman | 23.5% | 25.2% | 0.93 | -37.2% | 29.0% |
+| Trump | disclosed | 7.5% | 147.2% | 0.05 | -84.6% | 0.0% |
+| Trump | mean-variance | 10.2% | 12.0% | 0.85 | -21.2% | 27.4% |
+| Trump | Black-Litterman | 6.9% | 15.1% | 0.46 | -24.0% | 25.0% |
+| *benchmark* | *SPY, same window* | *14.6%* | *19.7%* | *0.74* | *-33.7%* | *n/a* |
+
+### Reading the table
+
+- **The overlay does not beat the disclosed book for Buffett or Pelosi**, and the honest
+  explanation is hindsight. A single snapshot dated 2025-12-31 (Buffett) or 2024-12-31 (the
+  others) is held all the way back to 2018, so the names are selected by having survived to
+  the snapshot date. Treat the `disclosed` column as an upper bound contaminated by
+  look-ahead, not as a fair competitor.
+- **Pelosi's disclosed book returned 27.9% a year against SPY's 14.6%**, with a comparable
+  drawdown. The same hindsight caveat applies in full.
+- **Trump's 147% volatility and -84.6% drawdown are one position.** DJT is 91% of that
+  snapshot and did not trade until late 2021, so the curve sits flat near 1.0 and then
+  inherits the ticker's swings almost directly. Both optimisers re-estimate weights from the
+  lookback window and never take on that concentration, which is why mean-variance turns a
+  0.05 Sharpe into 0.85.
+- **Black-Litterman lands between its two inputs in every case**, which is what the model is
+  built to do rather than a disappointment.
+
+### View confidence interpolates between the two baselines
+
+Because the equilibrium prior is implied from the disclosed weights, confidence sweeps the
+posterior from one baseline to the other. Distances are the mean L2 norm between weight
+vectors across rebalances (Buffett, real data).
+
+| Confidence | Distance to disclosed | Distance to mean-variance | Sharpe | Turnover |
+|---:|---:|---:|---:|---:|
+| 0.01 | 0.064 | 0.387 | 0.75 | 5.9% |
+| 0.20 | 0.348 | 0.242 | 0.72 | 24.7% |
+| 0.40 | 0.396 | 0.210 | 0.71 | 27.4% |
+| 0.65 | 0.413 | 0.169 | 0.68 | 29.4% |
+| 0.80 | 0.416 | 0.139 | 0.64 | 30.7% |
+| 0.95 | 0.415 | 0.094 | 0.58 | 32.6% |
+| 0.999 | 0.414 | 0.072 | 0.56 | 33.6% |
+
+Two things worth noting. Sharpe falls monotonically as confidence rises, so on this data
+trusting the trailing sample means more is actively harmful, and turnover rises with it.
+And the Black-Litterman strategy is best understood as a tunable blend of the other two
+rather than an independent third model.
+
+> **Caveat on the confidence axis.** `black_litterman_posterior` adds a fixed absolute
+> regularisation term of `1e-6` to the view-uncertainty matrix. That matrix holds per-period
+> variances, which across the three shipped universes span roughly `7e-8` to `6e-5`, so the
+> constant is anywhere from negligible to 41x the quantity it stabilises (worst case: a
+> BND-versus-VGIT relative view). The practical effect is that a
+> configured confidence is not the realised one, and the gap depends on asset volatility: at
+> a configured 0.65 the realised value is 0.14 for MUB and 0.64 for UNG. Relative views
+> between similar assets are affected most. Treat the confidence column above as ordinal
+> rather than as a calibrated probability until this is scaled to the matrix.
+
 ## Configuration
 
 All backtest and model hyper-parameters live in `configs/case_studies.yaml`:
