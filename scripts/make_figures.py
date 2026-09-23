@@ -211,9 +211,13 @@ def fig_calibration(calib, theme):
                      xy=(0.44, 0.20), xycoords="axes fraction",
                      fontsize=9, color=theme["secondary"], ha="left")
     fig.suptitle(
-        "Does a view move the posterior as far as you asked?  (annual volatility, low → high)",
+        "Does a view move the posterior as far as you asked?",
         x=0.005, ha="left", fontsize=12, fontweight="bold", color=theme["primary"])
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.text(0.005, 0.895,
+             "One view at a time, five assets spanning 3% to 49% annual volatility. "
+             "Per-asset calibration is a single-view property; see the README.",
+             ha="left", fontsize=8.5, color=theme["secondary"])
+    fig.tight_layout(rect=(0, 0, 1, 0.885))
     save(fig, "confidence-calibration", theme)
 
 

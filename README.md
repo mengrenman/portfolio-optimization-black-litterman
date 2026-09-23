@@ -237,20 +237,22 @@ other two rather than an independent third model.
 </picture>
 
 
-> **The confidence axis is calibrated.** Earlier versions added a fixed absolute `1e-6` to
+> **The confidence axis is calibrated for a single view.** Earlier versions added a fixed absolute `1e-6` to
 > the view-uncertainty matrix. Because that matrix holds per-period variances spanning
 > roughly `7e-8` to `6e-5` on these universes, the constant ranged from negligible to 41
 > times the quantity it was meant to stabilise, and the confidence a user configured was not
 > the one they got: a configured 0.65 realised as 0.14 for MUB and 0.64 for UNG. The
-> regularisation is now proportional to each asset's own variance, so the realised value
-> equals the configured one for every asset to within `2e-6`, and exactly when the ridge is
-> disabled. Read this column as the calibrated quantity it now is. The figures above are
-> post-fix; the correction moved the Trump mean-variance Sharpe from 0.85 to 0.80, that
-> case study having the worst-conditioned covariance.
+> regularisation is now proportional to each asset's own variance, so for a single view the
+> realised value equals the configured one for every asset to within `2e-6`, and exactly when
+> the ridge is disabled. The sweep above stacks one view per asset, where per-asset
+> calibration does not hold and `c` acts as a dial on the set of views rather than a per-asset
+> guarantee; see [Methodology](#methodology). The figures above are post-fix; the correction
+> moved the Trump mean-variance Sharpe from 0.85 to 0.80, that case study having the
+> worst-conditioned covariance.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/figures/confidence-calibration-dark.png">
-  <img alt="Realised versus configured view confidence for five assets spanning 3 to 49 percent annual volatility. Before the fix the lines fan out well below the identity line, with the least volatile asset reaching only 0.15 at full confidence. After the fix all five lie on the identity line." src="docs/figures/confidence-calibration.png">
+  <img alt="Realised versus configured view confidence for five assets spanning 3 to 49 percent annual volatility, measured one view at a time. Before the fix the lines fan out well below the identity line, with the least volatile asset reaching only 0.15 at full confidence. After the fix all five lie on the identity line. This single-view regime is the one in which per-asset calibration holds." src="docs/figures/confidence-calibration.png">
 </picture>
 
 
@@ -338,9 +340,23 @@ Each view's uncertainty is its own prior variance under the model, scaled by `(1
 approaches 0, the view is ignored. `Omega` is diagonal by construction, so view errors are
 assumed independent even when two views overlap on the same asset.
 
-This mapping is calibrated: the posterior moves exactly the configured fraction `c` of the
-way from the prior to the view, for every asset regardless of its volatility. A view set to
-0.65 lands 65% of the way there whether it names a municipal bond fund or a meme stock.
+**What `c` does and does not promise.** For a *single* view, the posterior moves exactly the
+fraction `c` of the way from the prior to that view, and it does so regardless of the asset's
+volatility: a lone view set to 0.65 lands 65% of the way there whether it names a municipal
+bond fund or a meme stock. The same holds for any number of views when `Sigma` is diagonal.
+
+It does **not** hold per asset once several views are active over a correlated `Sigma`, which
+is the shipped default, because `use_sample_mean_views: true` stacks one view per asset. There
+`Omega` is diagonal while `(tau*Sigma)^-1` is not, so the posterior pools each view's
+information across correlated assets. Measured on the last Buffett window at a configured
+0.65, the per-asset fraction ranges from -2.64 to 2.16: some assets move away from their own
+view because a correlated neighbour's view outweighs it. That is ordinary Bayesian updating
+with correlated evidence rather than a defect, and forcing `Sigma` diagonal returns every
+asset to exactly 0.65. But it does mean "0.65 means 65% of the way for this asset" is the
+wrong mental model in the default configuration. Read `c` there as a dial on how much the
+views as a set move the posterior, not as a per-asset guarantee. Idzorek's method, which
+solves for the `Omega` that achieves a target tilt, is the standard way to recover a per-view
+interpretation under stacking; it is not implemented here.
 
 **4. The default views are the trailing sample means.** With `use_sample_mean_views: true`
 the pipeline stacks one absolute view per asset:
@@ -363,10 +379,12 @@ Multiplying `mu` by 0.5, 2.5 or 10 returns bit-identical weights. `lambda` scale
 it too washes out.
 
 **`tau` cancels out of the posterior mean entirely.** Because `Omega` is derived from the
-same `tau * Sigma`, `tau` appears on both sides and drops out: with the ridge disabled,
-`mu_BL` is identical to machine precision for `tau = 0.005` and `tau = 5`. It reaches the
-weights only through `Sigma_BL = Sigma + inv(M)`. End to end on the Buffett case, moving
-`tau` from 0.05 to 0.5 shifts individual weights by at most 0.03, and to 5.0 by at most 0.43.
+same `tau * Sigma`, `tau` appears on both sides and drops out: `mu_BL` is identical to machine
+precision for `tau = 0.005` and `tau = 5`. Since the regularisation became relative this holds
+with the ridge active, because the ridge on `Omega` is scaled by a quantity that carries `tau`
+too. `tau` reaches the weights only through `Sigma_BL = Sigma + inv(M)`. End to end on the
+Buffett case, moving `tau` from 0.05 to 0.5 shifts individual weights by at most 0.044, and to
+5.0 by at most 0.448.
 Treat `tau` as a knob on the posterior covariance, not on how strongly views are applied.
 Use `view_confidence` for that.
 

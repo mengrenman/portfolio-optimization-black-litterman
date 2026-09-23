@@ -225,6 +225,49 @@ def test_realised_confidence_holds_for_relative_views() -> None:
         assert _realised_confidence(cov, pi, row, c) == pytest.approx(c, abs=1e-4)
 
 
+def _stacked_realised(cov: np.ndarray, pi: np.ndarray, q: np.ndarray, c: float) -> np.ndarray:
+    """Per-asset realised fraction when one view per asset is active at once."""
+    p = np.eye(len(pi))
+    omega = diagonal_omega_from_confidence(cov, p, tau=0.05, confidence=c)
+    mu, _ = black_litterman_posterior(pi, cov, p, q, tau=0.05, omega=omega)
+    return (mu - pi) / (q - pi)
+
+
+def test_stacked_views_are_calibrated_only_when_sigma_is_diagonal() -> None:
+    """Per-asset calibration is a single-view property, not a general one.
+
+    With one view per asset active at once, Omega is diagonal but (tau*Sigma)^-1
+    is not, so the posterior pools each view's information across correlated
+    assets. That is ordinary Bayesian updating, not a defect, but it means the
+    configured confidence is not a per-asset guarantee in the shipped default
+    configuration. This test pins the boundary so the limitation cannot be
+    documented away again.
+    """
+    correlated = np.array(
+        [[4.0e-4, 3.4e-4, 1.0e-5], [3.4e-4, 4.0e-4, 1.0e-5], [1.0e-5, 1.0e-5, 9.0e-4]]
+    )
+    pi = np.array([3.0e-4, 3.0e-4, 5.0e-4])
+    q = pi + np.array([2.0e-4, -2.0e-4, 1.0e-4])
+    c = 0.65
+
+    # Correlated Sigma: at least one asset misses its configured fraction badly.
+    spread = _stacked_realised(correlated, pi, q, c)
+    assert np.abs(spread - c).max() > 0.2, (
+        "expected stacked views over a correlated Sigma to break per-asset calibration"
+    )
+
+    # The same stack over a diagonal Sigma is exactly calibrated, which isolates
+    # the off-diagonal terms as the cause rather than the regularisation.
+    diagonal = np.diag(np.diag(correlated))
+    np.testing.assert_allclose(_stacked_realised(diagonal, pi, q, c), c, atol=1e-4)
+
+    # And a single view on the same correlated Sigma is still exact.
+    for i in range(3):
+        row = np.zeros(3)
+        row[i] = 1.0
+        assert _realised_confidence(correlated, pi, row, c) == pytest.approx(c, abs=1e-4)
+
+
 def test_realised_confidence_is_exact_without_the_ridge() -> None:
     """With the ridge disabled the calibration identity holds exactly."""
     cov = np.diag([1e-8, 1e-2]).astype(float)
