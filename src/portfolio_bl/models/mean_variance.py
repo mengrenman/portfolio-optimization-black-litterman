@@ -5,6 +5,8 @@ import logging
 import numpy as np
 import pandas as pd
 
+from portfolio_bl.models._numeric import relative_ridge
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,8 +63,10 @@ def long_only_markowitz_weights(
         expected_returns: Per-ticker expected returns.
         covariance: Asset covariance matrix whose index and columns match
             ``expected_returns.index``.
-        ridge: Ridge regularisation added to the diagonal of the covariance
-            matrix.
+        ridge: Relative ridge regularisation added to the diagonal of the
+            covariance matrix. It is a dimensionless fraction: the amount
+            added to each entry is ``ridge`` times that asset's own variance,
+            so the solve behaves the same at any return frequency.
 
     Returns:
         A Series of portfolio weights that sum to 1 and are non-negative.
@@ -71,7 +75,7 @@ def long_only_markowitz_weights(
     mu = expected_returns.to_numpy(dtype=float)
     cov = covariance.loc[tickers, tickers].to_numpy(dtype=float)
 
-    cov_reg = cov + np.eye(len(tickers)) * ridge
+    cov_reg = cov + np.diag(relative_ridge(cov, ridge))
     raw = np.linalg.solve(cov_reg, mu)
     raw = np.clip(raw, 0.0, None)
 

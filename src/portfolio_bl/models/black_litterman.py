@@ -6,7 +6,14 @@ from collections.abc import Sequence
 import numpy as np
 import pandas as pd
 
+from portfolio_bl.models._numeric import relative_ridge
+
 logger = logging.getLogger(__name__)
+
+# Floor on each view's uncertainty, as a fraction of that view's own projected
+# prior variance. It keeps Omega invertible at confidence == 1 without letting
+# an absolute constant decide how far a fully-trusted view moves the posterior.
+OMEGA_RELATIVE_FLOOR = 1e-10
 
 
 def implied_equilibrium_returns(
@@ -83,7 +90,12 @@ def diagonal_omega_from_confidence(
 
     # Higher confidence -> lower view uncertainty.
     scale = (1.0 - conf) / conf
-    return np.diag(diag * scale)
+    omega_diag = diag * scale
+
+    # At confidence == 1 the scale is exactly 0, which would make Omega
+    # singular. Floor it relative to each view's own projected variance so the
+    # limit stays well defined and calibration is preserved.
+    return np.diag(np.maximum(omega_diag, diag * OMEGA_RELATIVE_FLOOR))
 
 
 def black_litterman_posterior(
@@ -121,7 +133,14 @@ def black_litterman_posterior(
             prior more strongly.
         omega: View-uncertainty matrix Ω (k × k). If ``None``, defaults to the
             diagonal of P(τΣ)Pᵀ.
-        ridge: Ridge regularisation added to Σ and Ω to prevent singularity.
+        ridge: Relative ridge regularisation guarding against singularity.
+            It is a dimensionless fraction: the amount added to the diagonal
+            added to each diagonal entry of Σ is ``ridge`` times that asset's
+            own variance, and the amount added to Ω's k-th entry is ``ridge``
+            times that view's projected prior variance ``diag(P(τΣ)Pᵀ)``.
+            Scaling it this way keeps the model's behaviour identical whether
+            returns are daily, monthly or annual, and keeps it proportionate
+            when variances span orders of magnitude.
 
     Returns:
         A tuple ``(posterior_mean, posterior_covariance)`` where
@@ -133,7 +152,7 @@ def black_litterman_posterior(
     p = np.asarray(p_matrix, dtype=float)
     q = np.asarray(q_views, dtype=float)
 
-    sigma = sigma + np.eye(sigma.shape[0]) * ridge
+    sigma = sigma + np.diag(relative_ridge(sigma, ridge))
 
     if p.ndim != 2 or p.shape[1] != sigma.shape[0]:
         raise ValueError(f"p_matrix must have shape (k, {sigma.shape[0]}), got {p.shape}.")
@@ -141,9 +160,11 @@ def black_litterman_posterior(
         # No views: the posterior collapses to the prior and M⁻¹ = τΣ.
         return pi.copy(), sigma * (1.0 + tau)
 
+    projected = p @ (tau * sigma) @ p.T
     if omega is None:
-        omega = np.diag(np.diag(p @ (tau * sigma) @ p.T))
-    omega = np.asarray(omega, dtype=float) + np.eye(omega.shape[0]) * ridge
+        omega = np.diag(np.diag(projected))
+    omega = np.asarray(omega, dtype=float)
+    omega = omega + np.diag(relative_ridge(projected, ridge))
 
     tau_sigma_inv = np.linalg.pinv(tau * sigma)
     omega_inv = np.linalg.pinv(omega)

@@ -58,7 +58,7 @@ portfolio-optimization-black-litterman/
     data/                    # Disclosure + price loaders
     models/                  # BL posterior, pick-matrix views, mean-variance logic
     pipeline.py              # End-to-end experiment runner
-  tests/                     # Unit + integration tests (110 tests)
+  tests/                     # Unit + integration tests (122 tests)
 ```
 
 ## Input Data Schemas
@@ -157,14 +157,14 @@ Every disclosed ticker has price history, so no holding is dropped from any back
 | Person | Strategy | Annual return | Annual vol | Sharpe | Max drawdown | Turnover |
 |---|---|---:|---:|---:|---:|---:|
 | Buffett | disclosed | 17.5% | 23.5% | 0.75 | -43.4% | 0.0% |
-| Buffett | mean-variance | 10.7% | 21.4% | 0.50 | -34.9% | 36.0% |
-| Buffett | Black-Litterman | 14.5% | 21.3% | 0.68 | -32.3% | 29.4% |
+| Buffett | mean-variance | 10.6% | 21.4% | 0.49 | -34.9% | 36.2% |
+| Buffett | Black-Litterman | 14.2% | 21.2% | 0.67 | -32.7% | 30.1% |
 | Pelosi | disclosed | 27.9% | 27.6% | 1.01 | -38.9% | 0.0% |
-| Pelosi | mean-variance | 22.7% | 25.1% | 0.90 | -36.7% | 32.0% |
-| Pelosi | Black-Litterman | 23.5% | 25.2% | 0.93 | -37.2% | 29.0% |
+| Pelosi | mean-variance | 22.6% | 25.1% | 0.90 | -36.7% | 32.1% |
+| Pelosi | Black-Litterman | 23.2% | 25.1% | 0.93 | -37.3% | 29.2% |
 | Trump | disclosed | 7.5% | 147.2% | 0.05 | -84.6% | 0.0% |
-| Trump | mean-variance | 10.2% | 12.0% | 0.85 | -21.2% | 27.4% |
-| Trump | Black-Litterman | 6.9% | 15.1% | 0.46 | -24.0% | 25.0% |
+| Trump | mean-variance | 8.4% | 10.5% | 0.80 | -17.2% | 28.0% |
+| Trump | Black-Litterman | 6.0% | 11.5% | 0.52 | -23.1% | 26.6% |
 | *benchmark* | *SPY, same window* | *14.6%* | *19.7%* | *0.74* | *-33.7%* | *n/a* |
 
 ### Reading the table
@@ -180,7 +180,7 @@ Every disclosed ticker has price history, so no holding is dropped from any back
   snapshot and did not trade until late 2021, so the curve sits flat near 1.0 and then
   inherits the ticker's swings almost directly. Both optimisers re-estimate weights from the
   lookback window and never take on that concentration, which is why mean-variance turns a
-  0.05 Sharpe into 0.85.
+  0.05 Sharpe into 0.80.
 - **Black-Litterman lands between its two inputs in every case**, which is what the model is
   built to do rather than a disappointment.
 
@@ -192,28 +192,31 @@ vectors across rebalances (Buffett, real data).
 
 | Confidence | Distance to disclosed | Distance to mean-variance | Sharpe | Turnover |
 |---:|---:|---:|---:|---:|
-| 0.01 | 0.064 | 0.387 | 0.75 | 5.9% |
-| 0.20 | 0.348 | 0.242 | 0.72 | 24.7% |
-| 0.40 | 0.396 | 0.210 | 0.71 | 27.4% |
-| 0.65 | 0.413 | 0.169 | 0.68 | 29.4% |
-| 0.80 | 0.416 | 0.139 | 0.64 | 30.7% |
-| 0.95 | 0.415 | 0.094 | 0.58 | 32.6% |
-| 0.999 | 0.414 | 0.072 | 0.56 | 33.6% |
+| 0.01 | 0.063 | 0.390 | 0.75 | 5.9% |
+| 0.20 | 0.351 | 0.243 | 0.72 | 24.9% |
+| 0.40 | 0.400 | 0.209 | 0.71 | 27.7% |
+| 0.65 | 0.420 | 0.165 | 0.67 | 30.1% |
+| 0.80 | 0.423 | 0.126 | 0.62 | 31.7% |
+| 0.95 | 0.425 | 0.054 | 0.54 | 34.5% |
+| 0.999 | 0.429 | 0.002 | 0.49 | 36.2% |
 
-Two things worth noting. Sharpe falls monotonically as confidence rises, so on this data
+Three things worth noting. Sharpe falls monotonically as confidence rises, so on this data
 trusting the trailing sample means more is actively harmful, and turnover rises with it.
-And the Black-Litterman strategy is best understood as a tunable blend of the other two
-rather than an independent third model.
+The blend reaches its endpoints cleanly: at confidence 0.999 the distance to the
+mean-variance portfolio is 0.002, so a fully trusted view really does recover that
+portfolio. And the Black-Litterman strategy is best understood as a tunable blend of the
+other two rather than an independent third model.
 
-> **Caveat on the confidence axis.** `black_litterman_posterior` adds a fixed absolute
-> regularisation term of `1e-6` to the view-uncertainty matrix. That matrix holds per-period
-> variances, which across the three shipped universes span roughly `7e-8` to `6e-5`, so the
-> constant is anywhere from negligible to 41x the quantity it stabilises (worst case: a
-> BND-versus-VGIT relative view). The practical effect is that a
-> configured confidence is not the realised one, and the gap depends on asset volatility: at
-> a configured 0.65 the realised value is 0.14 for MUB and 0.64 for UNG. Relative views
-> between similar assets are affected most. Treat the confidence column above as ordinal
-> rather than as a calibrated probability until this is scaled to the matrix.
+> **The confidence axis is calibrated.** Earlier versions added a fixed absolute `1e-6` to
+> the view-uncertainty matrix. Because that matrix holds per-period variances spanning
+> roughly `7e-8` to `6e-5` on these universes, the constant ranged from negligible to 41
+> times the quantity it was meant to stabilise, and the confidence a user configured was not
+> the one they got: a configured 0.65 realised as 0.14 for MUB and 0.64 for UNG. The
+> regularisation is now proportional to each asset's own variance, so the realised value
+> equals the configured one for every asset to within `2e-6`, and exactly when the ridge is
+> disabled. Read this column as the calibrated quantity it now is. The figures above are
+> post-fix; the correction moved the Trump mean-variance Sharpe from 0.85 to 0.80, that
+> case study having the worst-conditioned covariance.
 
 ## Methodology
 
@@ -277,7 +280,7 @@ mu_BL    = inv(M) * ( inv(tau * Sigma) * pi  +  P' * inv(Omega) * q )
 Sigma_BL = Sigma + inv(M)
 ```
 
-- `Sigma` (n x n): window sample covariance, plus `ridge * I` with `ridge = 1e-6`.
+- `Sigma` (n x n): window sample covariance, plus a relative ridge (see below).
 - `P` (k x n): the pick matrix, one row per view.
 - `q` (k,): the per-period return each view asserts for its row of `P`.
 - `Omega` (k x k): view uncertainty. Larger entries mean a less trusted view.
@@ -297,9 +300,11 @@ Omega = diag( diag( P (tau * Sigma) P' ) * (1 - c) / c )
 Each view's uncertainty is its own prior variance under the model, scaled by `(1-c)/c`. At
 `c = 0.5` that factor is exactly 1. As `c` approaches 1, `Omega` goes to zero; as `c`
 approaches 0, the view is ignored. `Omega` is diagonal by construction, so view errors are
-assumed independent even when two views overlap on the same asset. See the caveat under
-[Selected Results](#selected-results) for how the fixed ridge distorts the realised
-confidence.
+assumed independent even when two views overlap on the same asset.
+
+This mapping is calibrated: the posterior moves exactly the configured fraction `c` of the
+way from the prior to the view, for every asset regardless of its volatility. A view set to
+0.65 lands 65% of the way there whether it names a municipal bond fund or a meme stock.
 
 **4. The default views are the trailing sample means.** With `use_sample_mean_views: true`
 the pipeline stacks one absolute view per asset:
@@ -319,11 +324,10 @@ rows below the identity block.
 **`risk_aversion` does not affect the final weights.** `long_only_markowitz_weights`
 renormalises to sum 1, and any positive rescaling of expected returns cancels in that step.
 Multiplying `mu` by 0.5, 2.5 or 10 returns bit-identical weights. `lambda` scales `pi`, so
-it too washes out. It changes the reported weights only through second-order interactions
-with the absolute ridge.
+it too washes out.
 
 **`tau` cancels out of the posterior mean entirely.** Because `Omega` is derived from the
-same `tau * Sigma`, `tau` appears on both sides and drops out: with the ridge removed,
+same `tau * Sigma`, `tau` appears on both sides and drops out: with the ridge disabled,
 `mu_BL` is identical to machine precision for `tau = 0.005` and `tau = 5`. It reaches the
 weights only through `Sigma_BL = Sigma + inv(M)`. End to end on the Buffett case, moving
 `tau` from 0.05 to 0.5 shifts individual weights by at most 0.03, and to 5.0 by at most 0.43.
@@ -335,7 +339,7 @@ Use `view_confidence` for that.
 Both optimisers finish in `long_only_markowitz_weights`:
 
 ```python
-cov_reg = cov + np.eye(len(tickers)) * ridge
+cov_reg = cov + np.diag(relative_ridge(cov, ridge))
 raw = np.linalg.solve(cov_reg, mu)   # unconstrained: w proportional to inv(Sigma) mu
 raw = np.clip(raw, 0.0, None)        # shorts clipped to zero
 weights = raw / raw.sum()            # renormalise to sum 1
@@ -351,6 +355,26 @@ optimal long-only portfolio".
 
 An equal-weight fallback fires if the clipped weights sum to zero or less. It never triggers
 on the bundled data across all 270 strategy-rebalances.
+
+### Regularisation is relative, not absolute
+
+Three places add a ridge to a covariance-like matrix to keep it invertible: `Sigma` and
+`Omega` inside the posterior, and the covariance inside the long-only solve. In each the
+`ridge` argument is a **dimensionless fraction**, and the amount added to a diagonal entry is
+that fraction of the entry itself:
+
+```python
+cov_reg = cov + np.diag(relative_ridge(cov, ridge))   # ridge defaults to 1e-6
+```
+
+This matters for two reasons. An absolute constant means something different for daily
+returns, whose variances sit near `1e-4`, than for monthly or annual ones, so it silently
+changes the model's behaviour with the data frequency; scaling each entry by its own variance
+makes the weights invariant to that choice. And within one universe, variances can span
+orders of magnitude, so a single matrix-wide constant is negligible for a volatile equity and
+dominant for a bond fund. Scaling per entry keeps the perturbation proportionate. Entries
+whose variance is zero fall back to the matrix's mean diagonal, so an exactly singular or
+all-zero covariance is still regularised.
 
 ## Backtest Semantics
 
@@ -386,7 +410,7 @@ difference is material where one position dominates:
 |---|---:|---:|
 | Buffett | 17.5% return, 0.75 Sharpe | 17.3%, 0.74 |
 | Pelosi | 27.9%, 1.01 | 31.1%, 1.04 |
-| Trump | 7.5%, 0.05 | 3.7%, 0.03 |
+| Trump | 7.5%, 0.05 | 3.7%, 0.02 |
 
 Trump is the instructive case: re-setting daily keeps buying back into DJT as it falls,
 which flatters the return by 3.8 points a year against simply holding.
@@ -440,12 +464,12 @@ rebalance gives:
 
 | Case | Strategy | 0 bp | 10 bp | 25 bp | 50 bp |
 |---|---|---:|---:|---:|---:|
-| Buffett | mean-variance | 0.50 | 0.48 | 0.44 | 0.39 |
-| Buffett | Black-Litterman | 0.68 | 0.66 | 0.63 | 0.58 |
-| Pelosi | Black-Litterman | 0.93 | 0.92 | 0.89 | 0.85 |
-| Trump | mean-variance | 0.85 | 0.82 | 0.77 | 0.70 |
+| Buffett | mean-variance | 0.49 | 0.47 | 0.44 | 0.38 |
+| Buffett | Black-Litterman | 0.67 | 0.65 | 0.62 | 0.57 |
+| Pelosi | Black-Litterman | 0.93 | 0.91 | 0.88 | 0.84 |
+| Trump | mean-variance | 0.80 | 0.76 | 0.71 | 0.62 |
 
-Costs move every comparison in the static book's favour, because the overlays turn over 25
+Costs move every comparison in the static book's favour, because the overlays turn over 27
 to 36 percent a month while the disclosed book reports zero. They do not overturn the
 ordering within any case study.
 
@@ -486,8 +510,10 @@ evidence that one method beats another.
 end date, so re-running it extends coverage to the current day and changes the backtest
 window, the rebalance dates and every figure in this README.
 
-**The realised view confidence is not the configured one.** See the caveat under
-[Selected Results](#selected-results).
+**Estimation noise is not the only thing the ridge used to hide.** Regularisation is now
+proportional to each matrix's own scale, so the realised view confidence equals the
+configured one and results no longer depend on whether returns are expressed daily or
+monthly. See the note under [Selected Results](#selected-results) for what changed.
 
 ## Configuration
 
@@ -627,7 +653,7 @@ these outputs and the report template are **not** tracked by git, while `data/` 
 ## Development
 
 ```bash
-pytest -q                       # 110 tests, about 2 seconds
+pytest -q                       # 122 tests, about 2 seconds
 ruff check src tests scripts    # linting
 ```
 
@@ -641,7 +667,7 @@ broken by refreshing the price data.
 | `tests/test_data_loaders.py` | 15 | Disclosure and price loading, cleaning, return matrix |
 | `tests/test_metrics.py` | 20 | Frequency inference and every performance metric |
 | `tests/test_pipeline_smoke.py` | 9 | End-to-end runs and config error paths |
-| `tests/test_views.py` | 29 | Views, pick-matrix construction, view config parsing |
+| `tests/test_views.py` | 35 | Views, pick-matrix construction, config parsing, ridge calibration |
 
 `ruff` currently reports 15 findings, all pre-existing and cosmetic: import ordering, three
 unused imports in the older test modules, unsorted `__all__` lists, a deprecated import path,

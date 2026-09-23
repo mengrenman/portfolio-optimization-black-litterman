@@ -10,6 +10,7 @@ import yaml
 
 from portfolio_bl.config import load_config
 from portfolio_bl.data.prices import load_prices_csv, to_return_matrix
+from portfolio_bl.models._numeric import relative_ridge
 from portfolio_bl.models.black_litterman import (
     black_litterman_posterior,
     diagonal_omega_from_confidence,
@@ -177,7 +178,120 @@ def test_posterior_with_no_views_returns_prior() -> None:
     pi = np.array([0.05, 0.04, 0.03])
     mu, cov = black_litterman_posterior(pi, COV, np.zeros((0, 3)), np.zeros(0), tau=0.05)
     np.testing.assert_allclose(mu, pi)
-    np.testing.assert_allclose(cov, 1.05 * (COV + 1e-6 * np.eye(3)))
+    # The ridge is relative to the matrix scale, not an absolute constant.
+    expected = 1.05 * (COV + np.diag(relative_ridge(COV, 1e-6)))
+    np.testing.assert_allclose(cov, expected)
+
+
+def _realised_confidence(cov: np.ndarray, pi: np.ndarray, row: np.ndarray, c: float) -> float:
+    """How far the posterior actually moves from the prior toward the view."""
+    p = row.reshape(1, -1)
+    base = float((p @ pi)[0])
+    q = np.array([base + 0.01])
+    omega = diagonal_omega_from_confidence(cov, p, tau=0.05, confidence=c)
+    mu, _ = black_litterman_posterior(pi, cov, p, q, tau=0.05, omega=omega)
+    return (float((p @ mu)[0]) - base) / (q[0] - base)
+
+
+@pytest.mark.parametrize("c", [0.1, 0.3, 0.65, 0.9, 0.99, 1.0])
+def test_realised_confidence_matches_configured_confidence(c: float) -> None:
+    """The configured confidence must be delivered regardless of asset volatility.
+
+    A fixed absolute ridge on Omega used to make the realised value depend on
+    how volatile the asset was, spanning 0.14 to 0.64 for a configured 0.65.
+
+    The tolerance is 1e-4 because the relative ridge is itself a 1e-6
+    perturbation; with ridge=0 the identity holds to machine precision. What
+    matters is that the realised value no longer depends on the asset.
+    """
+    # Variances spanning six orders of magnitude, as bond funds and a meme stock would.
+    cov = np.diag([1e-8, 1e-6, 1e-4, 1e-2]).astype(float)
+    pi = np.array([0.001, 0.002, 0.003, 0.004])
+    realised = [_realised_confidence(cov, pi, np.eye(4)[i], c) for i in range(4)]
+    for value in realised:
+        assert value == pytest.approx(c, abs=1e-4)
+    # The point of the fix: identical across assets, not merely close to c.
+    assert max(realised) - min(realised) < 1e-9
+
+
+def test_realised_confidence_holds_for_relative_views() -> None:
+    """Relative views between similar assets were the worst-affected case."""
+    cov = np.array(
+        [[1.0e-8, 0.9e-8, 0.0], [0.9e-8, 1.0e-8, 0.0], [0.0, 0.0, 1.0e-2]], dtype=float
+    )
+    pi = np.array([0.001, 0.001, 0.004])
+    row = np.array([1.0, -1.0, 0.0])
+    for c in (0.3, 0.65, 1.0):
+        assert _realised_confidence(cov, pi, row, c) == pytest.approx(c, abs=1e-4)
+
+
+def test_realised_confidence_is_exact_without_the_ridge() -> None:
+    """With the ridge disabled the calibration identity holds exactly."""
+    cov = np.diag([1e-8, 1e-2]).astype(float)
+    pi = np.array([0.001, 0.004])
+    p = np.array([[1.0, 0.0]])
+    for c in (0.25, 0.75):
+        base = float((p @ pi)[0])
+        q = np.array([base + 0.01])
+        omega = diagonal_omega_from_confidence(cov, p, tau=0.05, confidence=c)
+        mu, _ = black_litterman_posterior(pi, cov, p, q, tau=0.05, omega=omega, ridge=0.0)
+        realised = (float((p @ mu)[0]) - base) / (q[0] - base)
+        assert realised == pytest.approx(c, abs=1e-12)
+
+
+def test_posterior_is_invariant_to_return_frequency() -> None:
+    """Rescaling the covariance must not change the weights it implies."""
+    from portfolio_bl.models.mean_variance import long_only_markowitz_weights
+
+    base = np.array([[4e-4, 1e-4, 0.0], [1e-4, 5e-4, 1e-4], [0.0, 1e-4, 3e-4]])
+    weights = []
+    for factor in (1.0, 21.0, 252.0):
+        cov = base * factor
+        pi = implied_equilibrium_returns(
+            pd.DataFrame(cov, index=TICKERS, columns=TICKERS),
+            pd.Series([0.5, 0.3, 0.2], index=TICKERS),
+            risk_aversion=2.5,
+        )
+        p = np.eye(3)
+        q = pi + np.array([1e-4, 0.0, -1e-4]) * factor
+        omega = diagonal_omega_from_confidence(cov, p, tau=0.05, confidence=0.65)
+        mu, post = black_litterman_posterior(pi, cov, p, q, tau=0.05, omega=omega)
+        weights.append(
+            long_only_markowitz_weights(
+                pd.Series(mu, index=TICKERS),
+                pd.DataFrame(post, index=TICKERS, columns=TICKERS),
+            ).to_numpy()
+        )
+    np.testing.assert_allclose(weights[1], weights[0], rtol=1e-9)
+    np.testing.assert_allclose(weights[2], weights[0], rtol=1e-9)
+
+
+@pytest.mark.parametrize(
+    "cov",
+    [
+        np.array([[4e-4, 4e-4, 0.0], [4e-4, 4e-4, 0.0], [0.0, 0.0, 3e-4]]),
+        np.zeros((3, 3)),
+    ],
+    ids=["exactly-singular", "all-zero"],
+)
+def test_posterior_survives_degenerate_covariance(cov: np.ndarray) -> None:
+    """The relative ridge must still keep a singular covariance invertible."""
+    pi = np.array([1e-4, 5e-5, 2e-5])
+    p = np.eye(3)
+    omega = diagonal_omega_from_confidence(cov, p, tau=0.05, confidence=0.65)
+    mu, post = black_litterman_posterior(pi, cov, p, pi * 1.5, tau=0.05, omega=omega)
+    assert np.isfinite(mu).all()
+    assert np.isfinite(post).all()
+
+
+def test_omega_stays_invertible_at_full_confidence() -> None:
+    """(1-c)/c is exactly zero at c=1, so Omega needs a relative floor."""
+    cov = np.diag([1e-8, 1e-2]).astype(float)
+    omega = diagonal_omega_from_confidence(cov, np.eye(2), tau=0.05, confidence=1.0)
+    assert (np.diag(omega) > 0).all()
+    # The floor is proportional to each view's own projected variance, so the
+    # ratio between the two entries tracks the covariance, not a constant.
+    assert np.diag(omega)[1] / np.diag(omega)[0] == pytest.approx(1e6, rel=1e-6)
 
 
 def test_posterior_relative_view_moves_spread_toward_view() -> None:
@@ -391,7 +505,7 @@ def test_pipeline_without_any_views_tracks_disclosed_weights(tmp_path: Path) -> 
 
     bl = result.strategy_results["black_litterman"].weight_history
     disclosed = result.strategy_results["disclosed"].weight_history
-    # Two ridge terms of 1e-6 perturb the solve slightly on short windows.
+    # Two relative ridge terms perturb the solve slightly on short windows.
     np.testing.assert_allclose(bl.to_numpy(), disclosed.to_numpy(), atol=1e-2)
 
     # Sanity check that the tolerance is discriminating: sample-mean views move BL away.
