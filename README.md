@@ -211,41 +211,54 @@ title is scale-free and comparable across all three.
 ### Market exposure over time
 
 Returns alone do not say whether a strategy earned its result or simply took more market risk.
-A rolling 252-day beta against SPY separates the two, and needs no alpha estimate or factor
-model to do it.
+A rolling 252-day beta against SPY shows how much market exposure each strategy carried, and
+how that changed.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/figures/rolling-beta-dark.png">
-  <img alt="Rolling 252-day beta against SPY for each strategy across the three case studies. Buffett falls from about 1.3 to below 0.8 over the period, with both overlays below the disclosed book for all but a few months spanning 2020 and 2021. Pelosi's disclosed book runs a median beta of 1.34 while the overlays track lower and end below 1. The Trump disclosed line is near zero until late 2021 and then climbs past 1.6, while both overlays stay below 0.7 throughout." src="docs/figures/rolling-beta.png">
+  <img alt="Rolling 252-day beta against SPY for each strategy across the three case studies. Buffett's disclosed line starts near 1.0, peaks at 1.32 in early 2021 and ends at 0.89, with both overlays mostly below it and ending at 0.78. Pelosi's disclosed line stays above 1.2 for most of the period while the overlays track lower and end below 1. The Trump disclosed line sits near 0.08 until late 2021, then climbs past 1.6, while both overlays stay below 0.7 throughout." src="docs/figures/rolling-beta.png">
 </picture>
 
-Median beta over the backtest:
+Two betas are worth distinguishing. The median of the rolling series summarises the figure. The
+full-sample beta is measured over the same days as the return figures above, so it is the one to
+use when attributing those returns.
 
-| Person | Disclosed | Mean-variance | Black-Litterman |
-|---|---:|---:|---:|
-| Buffett | 0.95 | 0.84 | 0.79 |
-| Pelosi | 1.34 | 1.11 | 1.08 |
-| Trump | 0.81 | 0.42 | 0.35 |
+| Person | Strategy | Median rolling beta | Full-sample beta |
+|---|---|---:|---:|
+| Buffett | disclosed | 0.95 | 1.07 |
+| Buffett | mean-variance | 0.84 | 0.95 |
+| Buffett | Black-Litterman | 0.79 | 0.91 |
+| Pelosi | disclosed | 1.34 | 1.26 |
+| Pelosi | mean-variance | 1.11 | 1.12 |
+| Pelosi | Black-Litterman | 1.08 | 1.08 |
+| Trump | disclosed | 0.81 | 0.62 |
+| Trump | mean-variance | 0.42 | 0.43 |
+| Trump | Black-Litterman | 0.35 | 0.36 |
 
-- **Both overlays cut market exposure in every case**, which is the clearest thing they
-  demonstrably do. The effect is largest for Trump, where the median falls from 0.81 to 0.35.
-- **Pelosi's headline number is substantially a beta story.** That book returned 27.9% a year
-  against SPY's 14.6%, which reads as stock selection until you see it carried a median beta
-  of 1.34. A portfolio holding a third more market risk than the market should out-return it
-  in a rising decade.
-- **The overlays are also steadier.** Trump's disclosed beta spans 0.06 to 1.63 across the
-  backtest, a range of 1.57, while the Black-Litterman line stays inside 0.07 to 0.66.
+- **Both overlays carry less market exposure than the disclosed book in every case**, on both
+  measures. That is the clearest thing they demonstrably do.
+- **Beta explains part of Pelosi's headline number, but not most of it.** That book returned
+  27.9% a year against the market's 14.6%, a gap of 13.2 points. Its full-sample beta is 1.26,
+  so market exposure accounts for `1.26 x 14.6% - 14.6%`, about 3.8 points. The remaining 9.5
+  points is residual: Jensen's alpha of 8.8% a year, with a t-statistic near 2. Beta is roughly
+  a quarter of the story. The rest is what the hindsight caveat above is about, not skill
+  established by this backtest.
+- **The overlays are steadier**, though the headline contrast overstates it. Across the whole
+  series Trump's disclosed beta spans 1.57 while Black-Litterman spans 0.60, but both numbers
+  are inflated by the pre-2022 plateau described below. Restricting to windows that exclude it,
+  the disclosed range is still 1.11 against 0.35 for Black-Litterman.
 
-Two caveats specific to this figure. The Trump disclosed line sits near 0.08 until DJT begins
+Three caveats specific to this figure. The Trump disclosed line sits near 0.08 until DJT begins
 trading in September 2021, which is not low market exposure but the zero-fill described under
 [Backtest Semantics](#backtest-semantics): 91% of that book is a ticker with no returns yet.
-And SPY is itself 1.36% of the Trump disclosed portfolio, so that one line is very mildly
-regressed against itself. Neither applies to Buffett or Pelosi, who hold no SPY.
+That plateau also drags the Trump row of the table, whose median is 1.08 rather than 0.81 once
+those windows are dropped. And SPY is itself 1.36% of the Trump disclosed portfolio, so that one
+line is very mildly regressed against itself; Buffett and Pelosi hold no SPY.
 
-This figure deliberately stops short of an alpha estimate. Notebook 4 computes one, but its
-sector factors fall back to proxies built from the portfolios' own holdings when an ETF is
-missing from the price file, so its alpha is not comparable across the three cases. A rolling
-beta against a single genuine benchmark avoids that.
+This figure stops short of a full factor attribution. Notebook 4 computes one, but its sector
+factors fall back to proxies built from the portfolios' own holdings when an ETF is missing from
+the price file, so its alpha is not comparable across the three cases. A single genuine
+benchmark avoids that, at the cost of attributing only market exposure.
 
 ### View confidence interpolates between the two baselines
 
