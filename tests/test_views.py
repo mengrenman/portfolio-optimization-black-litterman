@@ -34,7 +34,7 @@ W_MKT = pd.Series([0.5, 0.3, 0.2], index=TICKERS)
 # ---------------------------------------------------------------------------
 
 
-def test_view_normalises_tickers_and_coerces_numbers() -> None:
+def test_view_normalizes_tickers_and_coerces_numbers() -> None:
     view = View(assets={" aapl ": "1"}, annual_return="0.08", confidence="0.5")
     assert view.assets == {"AAPL": 1.0}
     assert view.annual_return == 0.08
@@ -50,8 +50,8 @@ def test_view_relative_flag_and_describe() -> None:
     assert "CVX:+1" in view.describe() and "OXY:-1" in view.describe()
     assert "2.00%" in view.describe()
 
-    labelled = View(assets={"CVX": 1.0}, annual_return=0.02, label="CVX bull")
-    assert labelled.describe() == "CVX bull"
+    labeled = View(assets={"CVX": 1.0}, annual_return=0.02, label="CVX bull")
+    assert labeled.describe() == "CVX bull"
 
 
 @pytest.mark.parametrize(
@@ -183,7 +183,7 @@ def test_posterior_with_no_views_returns_prior() -> None:
     np.testing.assert_allclose(cov, expected)
 
 
-def _realised_confidence(cov: np.ndarray, pi: np.ndarray, row: np.ndarray, c: float) -> float:
+def _realized_confidence(cov: np.ndarray, pi: np.ndarray, row: np.ndarray, c: float) -> float:
     """How far the posterior actually moves from the prior toward the view."""
     p = row.reshape(1, -1)
     base = float((p @ pi)[0])
@@ -194,27 +194,27 @@ def _realised_confidence(cov: np.ndarray, pi: np.ndarray, row: np.ndarray, c: fl
 
 
 @pytest.mark.parametrize("c", [0.1, 0.3, 0.65, 0.9, 0.99, 1.0])
-def test_realised_confidence_matches_configured_confidence(c: float) -> None:
+def test_realized_confidence_matches_configured_confidence(c: float) -> None:
     """The configured confidence must be delivered regardless of asset volatility.
 
-    A fixed absolute ridge on Omega used to make the realised value depend on
+    A fixed absolute ridge on Omega used to make the realized value depend on
     how volatile the asset was, spanning 0.14 to 0.64 for a configured 0.65.
 
     The tolerance is 1e-4 because the relative ridge is itself a 1e-6
     perturbation; with ridge=0 the identity holds to machine precision. What
-    matters is that the realised value no longer depends on the asset.
+    matters is that the realized value no longer depends on the asset.
     """
     # Variances spanning six orders of magnitude, as bond funds and a meme stock would.
     cov = np.diag([1e-8, 1e-6, 1e-4, 1e-2]).astype(float)
     pi = np.array([0.001, 0.002, 0.003, 0.004])
-    realised = [_realised_confidence(cov, pi, np.eye(4)[i], c) for i in range(4)]
-    for value in realised:
+    realized = [_realized_confidence(cov, pi, np.eye(4)[i], c) for i in range(4)]
+    for value in realized:
         assert value == pytest.approx(c, abs=1e-4)
     # The point of the fix: identical across assets, not merely close to c.
-    assert max(realised) - min(realised) < 1e-9
+    assert max(realized) - min(realized) < 1e-9
 
 
-def test_realised_confidence_holds_for_relative_views() -> None:
+def test_realized_confidence_holds_for_relative_views() -> None:
     """Relative views between similar assets were the worst-affected case."""
     cov = np.array(
         [[1.0e-8, 0.9e-8, 0.0], [0.9e-8, 1.0e-8, 0.0], [0.0, 0.0, 1.0e-2]], dtype=float
@@ -222,11 +222,11 @@ def test_realised_confidence_holds_for_relative_views() -> None:
     pi = np.array([0.001, 0.001, 0.004])
     row = np.array([1.0, -1.0, 0.0])
     for c in (0.3, 0.65, 1.0):
-        assert _realised_confidence(cov, pi, row, c) == pytest.approx(c, abs=1e-4)
+        assert _realized_confidence(cov, pi, row, c) == pytest.approx(c, abs=1e-4)
 
 
-def _stacked_realised(cov: np.ndarray, pi: np.ndarray, q: np.ndarray, c: float) -> np.ndarray:
-    """Per-asset realised fraction when one view per asset is active at once."""
+def _stacked_realized(cov: np.ndarray, pi: np.ndarray, q: np.ndarray, c: float) -> np.ndarray:
+    """Per-asset realized fraction when one view per asset is active at once."""
     p = np.eye(len(pi))
     omega = diagonal_omega_from_confidence(cov, p, tau=0.05, confidence=c)
     mu, _ = black_litterman_posterior(pi, cov, p, q, tau=0.05, omega=omega)
@@ -236,7 +236,7 @@ def _stacked_realised(cov: np.ndarray, pi: np.ndarray, q: np.ndarray, c: float) 
 def test_per_view_calibration_requires_uncorrelated_view_projections() -> None:
     """Per-view calibration holds exactly when P(tau*Sigma)P' is diagonal.
 
-    Omega is diagonal by construction, so each view realises its configured
+    Omega is diagonal by construction, so each view realizes its configured
     fraction only when the views' projections are uncorrelated under the prior.
     That covers a single view, and the identity block over a diagonal Sigma. It
     fails as soon as two view rows touch the same asset, even when Sigma itself
@@ -254,21 +254,21 @@ def test_per_view_calibration_requires_uncorrelated_view_projections() -> None:
     c = 0.65
 
     # Correlated Sigma: at least one asset misses its configured fraction badly.
-    spread = _stacked_realised(correlated, pi, q, c)
+    spread = _stacked_realized(correlated, pi, q, c)
     assert np.abs(spread - c).max() > 0.2, (
         "expected stacked views over a correlated Sigma to break per-asset calibration"
     )
 
     # The same stack over a diagonal Sigma is exactly calibrated, which isolates
-    # the off-diagonal terms as the cause rather than the regularisation.
+    # the off-diagonal terms as the cause rather than the regularization.
     diagonal = np.diag(np.diag(correlated))
-    np.testing.assert_allclose(_stacked_realised(diagonal, pi, q, c), c, atol=1e-4)
+    np.testing.assert_allclose(_stacked_realized(diagonal, pi, q, c), c, atol=1e-4)
 
     # And a single view on the same correlated Sigma is still exact.
     for i in range(3):
         row = np.zeros(3)
         row[i] = 1.0
-        assert _realised_confidence(correlated, pi, row, c) == pytest.approx(c, abs=1e-4)
+        assert _realized_confidence(correlated, pi, row, c) == pytest.approx(c, abs=1e-4)
 
     # A diagonal Sigma is NOT sufficient on its own: overlapping pick rows
     # correlate the view projections even when the assets are uncorrelated.
@@ -278,8 +278,8 @@ def test_per_view_calibration_requires_uncorrelated_view_projections() -> None:
     mu_ov, _ = black_litterman_posterior(
         pi, diagonal, overlapping, q_ov, tau=0.05, omega=omega
     )
-    realised_ov = (overlapping @ mu_ov - overlapping @ pi) / (q_ov - overlapping @ pi)
-    assert np.abs(realised_ov - c).max() > 0.1, (
+    realized_ov = (overlapping @ mu_ov - overlapping @ pi) / (q_ov - overlapping @ pi)
+    assert np.abs(realized_ov - c).max() > 0.1, (
         "overlapping pick rows over a diagonal Sigma should break per-view calibration"
     )
 
@@ -363,24 +363,24 @@ def test_degenerate_view_variance_substitute_is_scale_carrying() -> None:
     pi_base = np.array([1e-3, 0.0, 2e-3])
     p = np.array([[0.0, 1.0, 0.0]])  # a view on the zero-variance asset
 
-    realised = []
+    realized = []
     for factor in (1.0, 21.0, 252.0):
         cov = base * factor
         pi = pi_base * factor
         q = np.array([pi[1] + 1e-3 * factor])
         omega = diagonal_omega_from_confidence(cov, p, tau=0.05, confidence=0.65)
         mu, _ = black_litterman_posterior(pi, cov, p, q, tau=0.05, omega=omega)
-        realised.append((float((p @ mu)[0]) - pi[1]) / (q[0] - pi[1]))
+        realized.append((float((p @ mu)[0]) - pi[1]) / (q[0] - pi[1]))
 
-    assert realised[1] == pytest.approx(realised[0], rel=1e-9)
-    assert realised[2] == pytest.approx(realised[0], rel=1e-9)
+    assert realized[1] == pytest.approx(realized[0], rel=1e-9)
+    assert realized[2] == pytest.approx(realized[0], rel=1e-9)
 
 
 def test_degenerate_view_still_drives_the_allocation() -> None:
     """A degenerate view is NOT ignored, whatever the posterior mean suggests.
 
     The posterior mean barely moves, which is easy to check and misleading. The
-    asset's posterior variance is ridge-sized too, and the optimiser takes the
+    asset's posterior variance is ridge-sized too, and the optimizer takes the
     ratio, so confidence stays a powerful dial on the weight. Pinned because an
     earlier version of the docs claimed such a view was effectively ignored.
     """
@@ -416,7 +416,7 @@ def test_degenerate_view_still_drives_the_allocation() -> None:
 
 
 def test_degenerate_view_variance_warns(caplog: pytest.LogCaptureFixture) -> None:
-    """The configured confidence cannot be honoured there, so it is logged."""
+    """The configured confidence cannot be honored there, so it is logged."""
     cov = np.diag([1e-4, 0.0])
     with caplog.at_level(logging.WARNING, logger="portfolio_bl.models.black_litterman"):
         omega = diagonal_omega_from_confidence(cov, np.eye(2), tau=0.05, confidence=0.65)
@@ -444,7 +444,7 @@ def test_confidence_below_the_floor_is_clipped_not_rejected() -> None:
         View(assets={"AAPL": 1.0}, annual_return=0.05, confidence=0.0)
 
 
-def test_realised_confidence_is_exact_without_the_ridge() -> None:
+def test_realized_confidence_is_exact_without_the_ridge() -> None:
     """With the ridge disabled the calibration identity holds exactly."""
     cov = np.diag([1e-8, 1e-2]).astype(float)
     pi = np.array([0.001, 0.004])
@@ -454,8 +454,8 @@ def test_realised_confidence_is_exact_without_the_ridge() -> None:
         q = np.array([base + 0.01])
         omega = diagonal_omega_from_confidence(cov, p, tau=0.05, confidence=c)
         mu, _ = black_litterman_posterior(pi, cov, p, q, tau=0.05, omega=omega, ridge=0.0)
-        realised = (float((p @ mu)[0]) - base) / (q[0] - base)
-        assert realised == pytest.approx(c, abs=1e-12)
+        realized = (float((p @ mu)[0]) - base) / (q[0] - base)
+        assert realized == pytest.approx(c, abs=1e-12)
 
 
 def test_posterior_is_invariant_to_return_frequency() -> None:
@@ -737,7 +737,7 @@ def test_pipeline_absolute_view_raises_target_weight(tmp_path: Path, seed: int) 
     """A bullish view must lift its target's weight, whatever the sample path.
 
     The size of the lift depends on the fixture: when the sample-mean views are
-    also active they may already favour XOM, leaving little headroom. Only the
+    also active they may already favor XOM, leaving little headroom. Only the
     explicit-views-only branch gets a magnitude threshold; the stacked branch
     asserts the direction, which is what the feature actually guarantees. The
     seeds include two (11, 40) whose stacked lift is under 10 points.

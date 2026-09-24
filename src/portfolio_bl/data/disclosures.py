@@ -13,7 +13,7 @@ REQUIRED_DISCLOSURE_COLUMNS = {"person", "as_of_date", "ticker", "value_usd"}
 def load_disclosures_csv(path: str | Path) -> pd.DataFrame:
     """Load and clean a disclosures CSV file.
 
-    Parses and normalises holdings data. Person names are lowercased and
+    Parses and normalizes holdings data. Person names are lowercased and
     stripped; tickers are uppercased; values are coerced to float. Rows with
     missing or non-positive values are dropped and a warning is emitted with
     the count of affected rows.
@@ -23,7 +23,7 @@ def load_disclosures_csv(path: str | Path) -> pd.DataFrame:
 
     Returns:
         A cleaned DataFrame sorted by ``as_of_date``, ``person_norm``, and
-        ``ticker``, with a new ``person_norm`` column containing the normalised
+        ``ticker``, with a new ``person_norm`` column containing the normalized
         person name.
 
     Raises:
@@ -75,7 +75,7 @@ def latest_portfolio_for_aliases(
 
     Filters the disclosure dataset to rows matching any of the supplied aliases
     (case-insensitive) and selects those from the most recent ``as_of_date``.
-    Weights are normalised to sum to 1.
+    Weights are normalized to sum to 1.
 
     Args:
         disclosures: Cleaned disclosure DataFrame as returned by

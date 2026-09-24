@@ -30,7 +30,7 @@ class View:
     Attributes:
         assets: Mapping from ticker to its coefficient in the pick-matrix
             row. Tickers are upper-cased and stripped on construction.
-        annual_return: Expected annualised arithmetic return of the
+        annual_return: Expected annualized arithmetic return of the
             combination, as a fraction (``0.05`` for 5%). It is divided by
             the number of return periods per year before entering the
             posterior so that it lives on the same scale as the data.
@@ -51,7 +51,7 @@ class View:
                 "a view must reference at least one asset."
             )
 
-        normalised: dict[str, float] = {}
+        normalized: dict[str, float] = {}
         for raw_ticker, raw_coef in self.assets.items():
             if not isinstance(raw_ticker, str):
                 # YAML 1.1 resolves bare ON/OFF/YES/NO/TRUE/FALSE keys to booleans, which
@@ -71,12 +71,12 @@ class View:
                 ) from exc
             if not math.isfinite(coef):
                 raise ValueError(f"View coefficient for {ticker!r} must be finite.")
-            if ticker in normalised:
+            if ticker in normalized:
                 raise ValueError(f"Ticker {ticker!r} appears more than once in a view.")
-            normalised[ticker] = coef
-        if all(c == 0.0 for c in normalised.values()):
+            normalized[ticker] = coef
+        if all(c == 0.0 for c in normalized.values()):
             raise ValueError("View coefficients cannot all be zero.")
-        object.__setattr__(self, "assets", normalised)
+        object.__setattr__(self, "assets", normalized)
 
         try:
             annual_return = float(self.annual_return)

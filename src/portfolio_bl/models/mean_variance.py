@@ -63,7 +63,7 @@ def long_only_markowitz_weights(
         expected_returns: Per-ticker expected returns.
         covariance: Asset covariance matrix whose index and columns match
             ``expected_returns.index``.
-        ridge: Relative ridge regularisation added to the diagonal of the
+        ridge: Relative ridge regularization added to the diagonal of the
             covariance matrix. It is a dimensionless fraction: the amount
             added to each entry is ``ridge`` times that asset's own variance,
             so the solve behaves the same at any return frequency.

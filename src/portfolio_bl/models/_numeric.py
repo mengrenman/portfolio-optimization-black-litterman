@@ -26,17 +26,17 @@ def mean_diagonal(matrix: np.ndarray, fallback: float = 1.0) -> float:
 def relative_ridge(matrix: np.ndarray, ridge: float) -> np.ndarray:
     """Per-entry ridge sized to each diagonal element of ``matrix``.
 
-    Regularisation added to a covariance-like matrix must be expressed
+    Regularization added to a covariance-like matrix must be expressed
     relative to that matrix's own scale, otherwise an absolute constant means
     something different for daily returns (variances near 1e-4) than for
-    monthly or annual ones, and it silently changes the model's behaviour with
+    monthly or annual ones, and it silently changes the model's behavior with
     the data frequency.
 
     Scaling by each diagonal entry rather than by one matrix-wide average also
     keeps the perturbation proportionate when variances span orders of
     magnitude, as they do when bond funds sit alongside a volatile equity.
     Entries whose variance is zero or unusable fall back to the matrix's mean
-    diagonal, so an exactly singular or all-zero matrix is still regularised.
+    diagonal, so an exactly singular or all-zero matrix is still regularized.
 
     Args:
         matrix: Square covariance-like matrix (n x n).

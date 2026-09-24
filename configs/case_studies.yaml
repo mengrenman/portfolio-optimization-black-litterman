@@ -8,7 +8,7 @@ backtest:
   risk_aversion: 2.5
   tau: 0.05
   view_confidence: 0.65
-  use_sample_mean_views: true   # false = optimise on the explicit views below only
+  use_sample_mean_views: true   # false = optimize on the explicit views below only
 
 case_studies:
   buffett:

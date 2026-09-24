@@ -78,10 +78,10 @@ def diagonal_omega_from_confidence(
         view on a constant-price series, or a relative view between two
         perfectly correlated ones.
 
-        Such a view does **not** realise its configured fraction ``c``: the
+        Such a view does **not** realize its configured fraction ``c``: the
         posterior mean moves only ``ridge * c/(1-c)`` of the way toward it.
         That is not the same as the view being ignored. The asset's posterior
-        variance is ridge-sized too, and a mean-variance optimiser takes the
+        variance is ridge-sized too, and a mean-variance optimizer takes the
         ratio, so the two cancel and ``c`` remains a powerful dial on the
         allocation. A zero-variance asset is risk-free, and asserting a
         positive return for it will pull most of the portfolio into it.
@@ -171,12 +171,12 @@ def black_litterman_posterior(
             prior more strongly.
         omega: View-uncertainty matrix Ω (k × k). If ``None``, defaults to the
             diagonal of P(τΣ)Pᵀ.
-        ridge: Relative ridge regularisation guarding against singularity.
+        ridge: Relative ridge regularization guarding against singularity.
             It is a dimensionless fraction: the amount added to the diagonal
             added to each diagonal entry of Σ is ``ridge`` times that asset's
             own variance, and the amount added to Ω's k-th entry is ``ridge``
             times that view's projected prior variance ``diag(P(τΣ)Pᵀ)``.
-            Scaling it this way keeps the model's behaviour identical whether
+            Scaling it this way keeps the model's behavior identical whether
             returns are daily, monthly or annual, and keeps it proportionate
             when variances span orders of magnitude.
 

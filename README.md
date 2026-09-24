@@ -26,7 +26,7 @@ Can a Black-Litterman overlay improve portfolio quality relative to:
 - Disclosure quality is source-dependent; conclusions are only as good as the input coverage.
 - This repo is for research only, not investment advice.
 
-See [Assumptions and Limitations](#assumptions-and-limitations) for the modelling choices
+See [Assumptions and Limitations](#assumptions-and-limitations) for the modeling choices
 that most affect how the results should be read.
 
 ## Known Model Limitation
@@ -196,7 +196,7 @@ title is scale-free and comparable across all three.
   drawdown. The same hindsight caveat applies in full.
 - **Trump's 147% volatility and -84.6% drawdown are one position.** DJT is 91% of that
   snapshot and did not trade until late 2021, so the curve sits flat near 1.0 and then
-  inherits the ticker's swings almost directly. Both optimisers re-estimate weights from the
+  inherits the ticker's swings almost directly. Both optimizers re-estimate weights from the
   lookback window and never take on that concentration, which is why mean-variance turns a
   0.05 Sharpe into 0.80.
 - **Black-Litterman lands between its two inputs in every case**, which is what the model is
@@ -243,12 +243,12 @@ other two rather than an independent third model.
 > between two similar bond funds goes lower still, down to `1.9e-8` for BND against VGIT.
 > The fixed constant therefore ranged from negligible at the top of that range to 51 times
 > the quantity it was meant to stabilise at the bottom, and the confidence a user configured
-> was not the one they got: a configured 0.65 realised as 0.14 for MUB and 0.64 for UNG. The
-> regularisation is now proportional to each asset's own variance, so a single absolute view
-> realises its configured value for every asset to within `2e-6`, and exactly when the ridge
+> was not the one they got: a configured 0.65 realized as 0.14 for MUB and 0.64 for UNG. The
+> regularization is now proportional to each asset's own variance, so a single absolute view
+> realizes its configured value for every asset to within `2e-6`, and exactly when the ridge
 > is disabled. A single *relative* view between two highly correlated assets is looser, since
-> `Omega` is derived from the unregularised covariance while the posterior uses the
-> regularised one: the error grows roughly as `ridge / (1 - rho)`, reaching `2e-5` at a
+> `Omega` is derived from the unregularized covariance while the posterior uses the
+> regularized one: the error grows roughly as `ridge / (1 - rho)`, reaching `2e-5` at a
 > correlation of 0.99. The sweep above stacks one view per asset, where per-asset
 > calibration does not hold and `c` acts as a dial on the set of views rather than a per-asset
 > guarantee; see [Methodology](#methodology). The figures above are post-fix; the correction
@@ -257,7 +257,7 @@ other two rather than an independent third model.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/figures/confidence-calibration-dark.png">
-  <img alt="Realised versus configured view confidence for five assets spanning 3 to 49 percent annual volatility, measured one view at a time. Before the fix the lines fan out well below the identity line, with the least volatile asset reaching only 0.15 at full confidence. After the fix all five lie on the identity line. This single-view regime is the one in which per-asset calibration holds." src="docs/figures/confidence-calibration.png">
+  <img alt="Realized versus configured view confidence for five assets spanning 3 to 49 percent annual volatility, measured one view at a time. Before the fix the lines fan out well below the identity line, with the least volatile asset reaching only 0.15 at full confidence. After the fix all five lie on the identity line. This single-view regime is the one in which per-asset calibration holds." src="docs/figures/confidence-calibration.png">
 </picture>
 
 
@@ -271,8 +271,8 @@ and `src/portfolio_bl/pipeline.py`.
 Every model quantity comes from one rolling window of daily arithmetic returns.
 
 - Returns are `pct_change()` on the pivoted adjusted-close matrix, so `mu`, `Sigma`, `pi`
-  and `q` are all in **daily** units. Nothing is annualised before the optimiser;
-  annualisation happens only in the metrics layer.
+  and `q` are all in **daily** units. Nothing is annualized before the optimizer;
+  annualization happens only in the metrics layer.
 - Rebalance dates are the last trading day of each month (`rebalance_frequency: ME`).
 - `lookback_periods: 6` counts **rebalance intervals, not rows**. The training slice runs
   from the month-end six rebalances earlier up to, but excluding, the current one, which is
@@ -287,7 +287,7 @@ Every model quantity comes from one rolling window of daily arithmetic returns.
 ### `disclosed`
 
 Weights are `value_usd / value_usd.sum()` at the person's latest `as_of_date`, restricted to
-tickers that also have price history, then renormalised. The same vector is returned at
+tickers that also have price history, then renormalized. The same vector is returned at
 every rebalance.
 
 ### `mean_variance`
@@ -304,8 +304,8 @@ pi = lambda * Sigma * w_mkt
 ```
 
 where `lambda` is `backtest.risk_aversion` and `w_mkt` is **the disclosed portfolio weights,
-renormalised over the tickers with data in this window**, not true market-capitalisation
-weights. This is the single most consequential modelling choice in the repo. Textbook
+renormalized over the tickers with data in this window**, not true market-capitalisation
+weights. This is the single most consequential modeling choice in the repo. Textbook
 Black-Litterman asks what returns would make *the market* efficient; this asks what returns
 would make *this person's book* efficient. The prior is therefore the disclosed portfolio
 itself, and the posterior blends the disclosed book with the views rather than the market
@@ -313,7 +313,7 @@ with the views.
 
 The direct consequence is that **with no views the model returns the disclosed portfolio.**
 The posterior collapses to `mu_BL = pi` and `Sigma_BL = (1 + tau) * Sigma`, and the solver's
-unconstrained step is then proportional to `w_mkt`, which survives renormalisation.
+unconstrained step is then proportional to `w_mkt`, which survives renormalization.
 
 **2. The posterior.** `black_litterman_posterior` implements
 
@@ -345,7 +345,7 @@ Each view's uncertainty is its own prior variance under the model, scaled by `(1
 approaches 0, the view is ignored. `Omega` is diagonal by construction, so view errors are
 assumed independent even when two views overlap on the same asset.
 
-**What `c` does and does not promise.** Each view realises exactly the fraction `c` when
+**What `c` does and does not promise.** Each view realizes exactly the fraction `c` when
 `P(tau*Sigma)P'` is diagonal *with strictly positive entries*, that is when the views'
 projections are uncorrelated under the prior and each one carries some prior variance of its
 own. `Omega` is diagonal by construction, so that is precisely the condition under which it
@@ -357,11 +357,11 @@ stock; and the identity block of sample-mean views over a diagonal `Sigma`.
 It does **not** hold in the shipped default, where `use_sample_mean_views: true` stacks one
 view per asset over a correlated `Sigma`. Measured on the last Buffett estimation window at a
 configured 0.65, the per-asset fraction runs from -0.23 to 3.48: some assets overshoot their
-view several times over, and others move away from it because a correlated neighbour's view
+view several times over, and others move away from it because a correlated neighbor's view
 outweighs it. Nor does a diagonal `Sigma` rescue it once two pick rows touch the same asset,
 which is what happens as soon as you add an explicit view on a ticker the sample-mean block
 already covers. With `Sigma = diag(4e-4, 4e-4, 9e-4)` and one relative row stacked under the
-identity block, the realised fractions are 0.79, 0.79, 0.65 and 0.79 against a configured 0.65.
+identity block, the realized fractions are 0.79, 0.79, 0.65 and 0.79 against a configured 0.65.
 
 This is ordinary Bayesian updating with correlated evidence rather than a defect: the
 posterior is pooling what the views jointly say. But it does mean "0.65 means 65% of the way
@@ -380,10 +380,10 @@ Two edge cases sit outside the guarantee and are handled explicitly rather than 
   and a warning is logged. The substitute carries the data's units, so the weights stay
   invariant to return frequency.
 
-  Such a view does **not** realise its configured `c`, and it is also **not** ignored, which
+  Such a view does **not** realize its configured `c`, and it is also **not** ignored, which
   is the trap. The posterior *mean* moves only `ridge * c/(1-c)` of the way toward it, so
   inspecting the mean suggests the view did nothing. But the asset's posterior *variance* is
-  ridge-sized too, and a mean-variance optimiser takes the ratio, so the two cancel and `c`
+  ridge-sized too, and a mean-variance optimizer takes the ratio, so the two cancel and `c`
   stays a powerful dial on the allocation. On a three-asset example the zero-variance asset
   goes from a weight of 0.00 with no view to 0.83 at `c = 0.5` and 1.00 at `c = 1`. That is
   defensible rather than broken: a zero-variance asset is risk-free, and asserting a positive
@@ -402,7 +402,7 @@ the pipeline stacks one absolute view per asset:
 P = I (n x n)     q = mu, the lookback sample mean per asset     c = view_confidence
 ```
 
-Out of the box the "analyst view" is simply the last six months of realised average return,
+Out of the box the "analyst view" is simply the last six months of realized average return,
 asserted asset by asset. That is why the strategy behaves as a tunable blend of `disclosed`
 (the prior) and `mean_variance` (the views), and why raising confidence on this data hurts:
 it means trusting a six-month trailing mean more. Explicit YAML views are appended as extra
@@ -411,13 +411,13 @@ rows below the identity block.
 ### Two parameters that do less than they appear to
 
 **`risk_aversion` does not affect the final weights.** `long_only_markowitz_weights`
-renormalises to sum 1, and any positive rescaling of expected returns cancels in that step.
+renormalizes to sum 1, and any positive rescaling of expected returns cancels in that step.
 Multiplying `mu` by 0.5, 2.5 or 10 returns bit-identical weights. `lambda` scales `pi`, so
 it too washes out.
 
 **`tau` cancels out of the posterior mean entirely.** Because `Omega` is derived from the
 same `tau * Sigma`, `tau` appears on both sides and drops out: `mu_BL` is identical to machine
-precision for `tau = 0.005` and `tau = 5`. Since the regularisation became relative this holds
+precision for `tau = 0.005` and `tau = 5`. Since the regularization became relative this holds
 with the ridge active, because the ridge on `Omega` is scaled by a quantity that carries `tau`
 too. `tau` reaches the weights only through `Sigma_BL = Sigma + inv(M)`. End to end on the
 Buffett case, moving `tau` from 0.05 to 0.5 shifts individual weights by at most 0.044, and to
@@ -427,13 +427,13 @@ Use `view_confidence` for that.
 
 ### The long-only step is a projection, not a constrained optimum
 
-Both optimisers finish in `long_only_markowitz_weights`:
+Both optimizers finish in `long_only_markowitz_weights`:
 
 ```python
 cov_reg = cov + np.diag(relative_ridge(cov, ridge))
 raw = np.linalg.solve(cov_reg, mu)   # unconstrained: w proportional to inv(Sigma) mu
 raw = np.clip(raw, 0.0, None)        # shorts clipped to zero
-weights = raw / raw.sum()            # renormalise to sum 1
+weights = raw / raw.sum()            # renormalize to sum 1
 ```
 
 The system is solved with **no sign constraint and no budget constraint**. Negative entries
@@ -447,7 +447,7 @@ optimal long-only portfolio".
 An equal-weight fallback fires if the clipped weights sum to zero or less. It never triggers
 on the bundled data across all 270 strategy-rebalances.
 
-### Regularisation is relative, not absolute
+### Regularization is relative, not absolute
 
 Three places add a ridge to a covariance-like matrix to keep it invertible: `Sigma` and
 `Omega` inside the posterior, and the covariance inside the long-only solve. In each the
@@ -460,19 +460,19 @@ cov_reg = cov + np.diag(relative_ridge(cov, ridge))   # ridge defaults to 1e-6
 
 This matters for two reasons. An absolute constant means something different for daily
 returns, whose variances sit near `1e-4`, than for monthly or annual ones, so it silently
-changes the model's behaviour with the data frequency; scaling each entry by its own variance
+changes the model's behavior with the data frequency; scaling each entry by its own variance
 makes the weights invariant to that choice. And within one universe, variances can span
 orders of magnitude, so a single matrix-wide constant is negligible for a volatile equity and
 dominant for a bond fund. Scaling per entry keeps the perturbation proportionate. An entry
 whose variance is zero or not finite falls back to the mean of *all* the absolute diagonal
-entries, zeros included, so an exactly singular covariance is still regularised. When that
+entries, zeros included, so an exactly singular covariance is still regularized. When that
 mean is itself unusable, which happens for an all-zero diagonal and whenever any entry is NaN
 or infinite, the helper falls back to an absolute `ridge`. Those are the only cases where the
-old behaviour is retained.
+old behavior is retained.
 
 ## Backtest Semantics
 
-The behaviour of `src/portfolio_bl/backtest/engine.py` and `metrics.py`. Figures are for the
+The behavior of `src/portfolio_bl/backtest/engine.py` and `metrics.py`. Figures are for the
 shipped configuration on the bundled data.
 
 ### The walk-forward loop
@@ -524,13 +524,13 @@ Two different mechanisms handle gaps, and they interact:
 A ticker that has not listed yet therefore behaves like uncompensated cash: it neither gains
 nor loses, but it still occupies its share of the portfolio. For the Trump case study, DJT
 is 91% of the disclosed book and does not trade until 2021-09-30, so the `disclosed` curve
-sits nearly flat for years before inheriting the ticker's swings. The optimisers cannot hold
+sits nearly flat for years before inheriting the ticker's swings. The optimizers cannot hold
 DJT until the 2022-04-29 rebalance, the first with a complete lookback window.
 
 ### Metrics
 
 - `periods_per_year` is inferred from the median gap between dates, resolving to 252 here.
-- Annualised return is **geometric**; annualised volatility is the sample standard deviation
+- Annualized return is **geometric**; annualized volatility is the sample standard deviation
   scaled by the square root of `periods_per_year`.
 - Sharpe and Sortino both assume a **zero risk-free rate**.
 - Sortino returns NaN rather than infinity when a series has no negative returns, which keeps
@@ -550,7 +550,7 @@ backtest: Buffett's is dated 2025-12-31 and the other two 2024-12-31, against a 
 opens in August 2018. The constituents are therefore known to have survived to the snapshot
 date, and positions closed earlier never appear. The `disclosed` column is an upper bound
 contaminated by look-ahead, not a fair competitor. The same selection flows into the other
-two strategies, which optimise within that same surviving universe.
+two strategies, which optimize within that same surviving universe.
 
 **Nothing is charged for trading.** No transaction costs, slippage, taxes, borrow or
 financing appear anywhere. Charging a plausible cost against measured turnover at each
@@ -563,7 +563,7 @@ rebalance gives:
 | Pelosi | Black-Litterman | 0.93 | 0.91 | 0.88 | 0.84 |
 | Trump | mean-variance | 0.80 | 0.76 | 0.71 | 0.62 |
 
-Costs move every comparison in the static book's favour, because the overlays turn over 26
+Costs move every comparison in the static book's favor, because the overlays turn over 26
 to 37 percent a month while the disclosed book reports zero. They do not overturn the
 ordering within any case study.
 
@@ -604,8 +604,8 @@ evidence that one method beats another.
 end date, so re-running it extends coverage to the current day and changes the backtest
 window, the rebalance dates and every figure in this README.
 
-**Estimation noise is not the only thing the ridge used to hide.** Regularisation is now
-proportional to each matrix's own scale, so the realised view confidence equals the
+**Estimation noise is not the only thing the ridge used to hide.** Regularization is now
+proportional to each matrix's own scale, so the realized view confidence equals the
 configured one and results no longer depend on whether returns are expressed daily or
 monthly. See the note under [Selected Results](#selected-results) for what changed.
 
@@ -656,18 +656,18 @@ case_studies:
         annual_return: 0.02            # CVX beats OXY by 2% per year
 ```
 
-Rules and behaviour:
+Rules and behavior:
 
 - `assets` maps tickers to pick-matrix coefficients. An absolute view has one ticker with
   coefficient 1. A relative view has positive coefficients on the outperformers and negative
   coefficients on the underperformers; by convention each side sums to 1 in absolute value.
-- `annual_return` is an annualised arithmetic return. It is divided by the number of return
+- `annual_return` is an annualized arithmetic return. It is divided by the number of return
   periods per year (252 for daily data) so it matches the scale of the covariance matrix.
 - `confidence` is optional and per view, in `(0, 1]`. Views without it use
   `backtest.view_confidence`, as does the `view_confidence` override of `run_case_study`.
 - By default (`use_sample_mean_views: true`) explicit views are stacked on top of the
   built-in sample-mean views, so the existing case studies are unchanged when no views are
-  configured. Set `use_sample_mean_views: false` to optimise on explicit views alone. With
+  configured. Set `use_sample_mean_views: false` to optimize on explicit views alone. With
   that flag off and no views, the posterior equals the prior and the Black-Litterman
   weights track the disclosed portfolio.
 - A view that references a ticker outside the case study's universe is ignored with a
@@ -753,9 +753,9 @@ python scripts/make_figures.py  # regenerate docs/figures/ (needs matplotlib)
 ```
 
 `make_figures.py` writes a light and a dark variant of every plot, which the README pairs
-with `<picture>` so GitHub serves the one matching the reader's theme. Colours come from a
-categorical palette whose first three slots are documented to clear the colour-vision
-deficiency gates for every pair in both modes; the benchmark series is neutral grey rather
+with `<picture>` so GitHub serves the one matching the reader's theme. Colors come from a
+categorical palette whose first three slots are documented to clear the color-vision
+deficiency gates for every pair in both modes; the benchmark series is neutral gray rather
 than a fourth hue because it is context, not a peer.
 
 The suite is entirely self-contained: every fixture is synthetic and written to a temporary

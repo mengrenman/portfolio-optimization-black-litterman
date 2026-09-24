@@ -190,7 +190,7 @@ def load_config(path: str | Path) -> AppConfig:
     case_studies: dict[str, CaseStudyConfig] = {}
     for key, item in case_cfg.items():
         # YAML keys are not always strings (a bare 2024: parses as an int), so
-        # normalise once instead of calling str-only methods on the raw key.
+        # normalize once instead of calling str-only methods on the raw key.
         key_str = str(key)
         aliases = item.get("disclosure_aliases", [key_str])
         case_studies[key_str] = CaseStudyConfig(

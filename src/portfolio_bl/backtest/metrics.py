@@ -25,13 +25,13 @@ def infer_periods_per_year(index: pd.DatetimeIndex) -> int:
 
     Warns:
         UserWarning: If fewer than 3 observations are present; frequency cannot
-            be reliably inferred and defaults to 12 (monthly). Annualised
+            be reliably inferred and defaults to 12 (monthly). Annualized
             metrics may be inaccurate.
     """
     if len(index) < 3:
         warnings.warn(
             f"Only {len(index)} observation(s) in index; cannot reliably infer frequency. "
-            "Defaulting to 12 (monthly). Annualised metrics may be inaccurate.",
+            "Defaulting to 12 (monthly). Annualized metrics may be inaccurate.",
             UserWarning,
             stacklevel=2,
         )
@@ -52,14 +52,14 @@ def infer_periods_per_year(index: pd.DatetimeIndex) -> int:
 
 
 def annualized_return(returns: pd.Series, periods_per_year: int) -> float:
-    """Compute annualised geometric return.
+    """Compute annualized geometric return.
 
     Args:
         returns: Period return series.
         periods_per_year: Number of return periods per calendar year.
 
     Returns:
-        Annualised geometric return, or NaN if the series is empty.
+        Annualized geometric return, or NaN if the series is empty.
     """
     if returns.empty:
         return float("nan")
@@ -69,14 +69,14 @@ def annualized_return(returns: pd.Series, periods_per_year: int) -> float:
 
 
 def annualized_volatility(returns: pd.Series, periods_per_year: int) -> float:
-    """Compute annualised return volatility.
+    """Compute annualized return volatility.
 
     Args:
         returns: Period return series.
         periods_per_year: Number of return periods per calendar year.
 
     Returns:
-        Annualised volatility (standard deviation), or NaN if the series is
+        Annualized volatility (standard deviation), or NaN if the series is
         empty.
     """
     if returns.empty:
@@ -87,12 +87,12 @@ def annualized_volatility(returns: pd.Series, periods_per_year: int) -> float:
 def sharpe_ratio(
     returns: pd.Series, periods_per_year: int, risk_free_rate: float = 0.0
 ) -> float:
-    """Compute annualised Sharpe ratio.
+    """Compute annualized Sharpe ratio.
 
     Args:
         returns: Period return series.
         periods_per_year: Number of return periods per calendar year.
-        risk_free_rate: Annualised risk-free rate used as the hurdle.
+        risk_free_rate: Annualized risk-free rate used as the hurdle.
 
     Returns:
         Sharpe ratio, or NaN if volatility is zero or not finite.
@@ -107,9 +107,9 @@ def sharpe_ratio(
 def sortino_ratio(
     returns: pd.Series, periods_per_year: int, risk_free_rate: float = 0.0
 ) -> float:
-    """Compute annualised Sortino ratio.
+    """Compute annualized Sortino ratio.
 
-    Unlike the Sharpe ratio, Sortino penalises only downside volatility
+    Unlike the Sharpe ratio, Sortino penalizes only downside volatility
     (returns below zero). Returns NaN — rather than +Inf — when no negative
     returns exist. This edge case is common in short bull-market windows and
     returning NaN keeps downstream comparisons and CSV outputs well-defined.
@@ -117,7 +117,7 @@ def sortino_ratio(
     Args:
         returns: Period return series.
         periods_per_year: Number of return periods per calendar year.
-        risk_free_rate: Annualised risk-free rate used as the hurdle.
+        risk_free_rate: Annualized risk-free rate used as the hurdle.
 
     Returns:
         Sortino ratio, or NaN if the series is empty, has no downside returns,

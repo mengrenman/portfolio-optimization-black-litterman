@@ -5,9 +5,9 @@ Writes a light and a dark variant of each figure to ``docs/figures/``. The
 README pairs them with ``<picture>`` so GitHub serves the one matching the
 reader's theme.
 
-Colours come from a validated categorical palette; only the first three slots
-are used, which are documented to clear the colour-vision-deficiency gates for
-every pair in both modes. The benchmark series is deliberately neutral grey
+Colors come from a validated categorical palette; only the first three slots
+are used, which are documented to clear the color-vision-deficiency gates for
+every pair in both modes. The benchmark series is deliberately neutral gray
 rather than a fourth hue: it is context, not a peer.
 
 Usage:
@@ -205,7 +205,7 @@ def fig_calibration(calib, theme):
         ax.set_xlabel("Configured confidence")
         ax.set_xlim(0, 1.02)
         ax.set_ylim(0, 1.02)
-    axes[0].set_ylabel("Realised confidence")
+    axes[0].set_ylabel("Realized confidence")
     axes[0].legend(loc="upper left", fontsize=8)
     axes[1].annotate("all five assets coincide\non the identity line",
                      xy=(0.44, 0.20), xycoords="axes fraction",
@@ -250,7 +250,7 @@ def fig_concentration(books, theme):
 # --- data --------------------------------------------------------------------
 
 def _absolute_ridge_posterior(pi, sigma, p, q, tau, omega, ridge=1e-6):
-    """The pre-fix behaviour, reproduced here only to draw the 'before' panel."""
+    """The pre-fix behavior, reproduced here only to draw the 'before' panel."""
     sigma = np.asarray(sigma, dtype=float) + np.eye(sigma.shape[0]) * ridge
     omega = np.asarray(omega, dtype=float) + np.eye(omega.shape[0]) * ridge
     tsi = np.linalg.pinv(tau * sigma)
@@ -260,7 +260,7 @@ def _absolute_ridge_posterior(pi, sigma, p, q, tau, omega, ridge=1e-6):
 
 
 def build_calibration(cfg, rets):
-    """Realised confidence per asset, before and after the fix."""
+    """Realized confidence per asset, before and after the fix."""
     universe = ["MUB", "BND", "LQD", "SPY", "UNG"]      # low -> high volatility
     window = rets[universe].dropna().tail(126)
     _, cov = estimate_mean_cov(window)
