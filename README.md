@@ -216,7 +216,7 @@ model to do it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/figures/rolling-beta-dark.png">
-  <img alt="Rolling 252-day beta against SPY for each strategy across the three case studies. Buffett falls from about 1.3 to below 0.8 over the period with both overlays below the disclosed book throughout. Pelosi's disclosed book runs a median beta of 1.34 while the overlays track lower and end below 1. The Trump disclosed line is near zero until late 2021 and then climbs past 1.6, while both overlays stay between 0.3 and 0.6." src="docs/figures/rolling-beta.png">
+  <img alt="Rolling 252-day beta against SPY for each strategy across the three case studies. Buffett falls from about 1.3 to below 0.8 over the period, with both overlays below the disclosed book for all but a few months spanning 2020 and 2021. Pelosi's disclosed book runs a median beta of 1.34 while the overlays track lower and end below 1. The Trump disclosed line is near zero until late 2021 and then climbs past 1.6, while both overlays stay below 0.7 throughout." src="docs/figures/rolling-beta.png">
 </picture>
 
 Median beta over the backtest:
