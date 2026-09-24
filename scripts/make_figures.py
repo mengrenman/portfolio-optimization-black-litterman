@@ -167,6 +167,43 @@ def fig_drawdowns(results, theme):
     save(fig, "drawdowns", theme)
 
 
+ROLLING_WINDOW = 252
+
+
+def rolling_beta(returns: pd.Series, market: pd.Series, window: int = ROLLING_WINDOW) -> pd.Series:
+    """Rolling OLS beta of a return series against the market."""
+    paired = pd.concat([returns.rename("y"), market.rename("x")], axis=1).dropna()
+    covariance = paired["y"].rolling(window).cov(paired["x"])
+    variance = paired["x"].rolling(window).var()
+    return (covariance / variance).dropna()
+
+
+def fig_rolling_beta(results, spy, theme):
+    fig, axes = plt.subplots(3, 1, figsize=(8.5, 8.4), sharey=False)
+    handles = None
+    for ax, (key, res) in zip(axes, results.items()):
+        for i, (name, sr) in enumerate(res.strategy_results.items()):
+            beta = rolling_beta(sr.returns, spy)
+            ax.plot(beta.index, beta.values, color=theme["series"][i],
+                    linewidth=1.8, label=STRATEGY_LABEL[name], zorder=3)
+        ax.axhline(1.0, color=theme["muted"], linewidth=1.2,
+                   linestyle=(0, (4, 3)), zorder=2)
+        ax.annotate("market", xy=(0.995, 1.0), xycoords=("axes fraction", "data"),
+                    xytext=(0, 3), textcoords="offset points", ha="right", va="bottom",
+                    fontsize=8, color=theme["muted"])
+        ax.set_title(res.person_label, loc="left", pad=10)
+        ax.set_ylabel("Beta vs SPY")
+        ax.margins(x=0.01)
+        if handles is None:
+            handles = ax.get_legend_handles_labels()
+    fig.legend(*handles, loc="upper left", bbox_to_anchor=(0.008, 0.952),
+               ncols=3, fontsize=9)
+    fig.suptitle("Rolling market exposure (252-day beta)", x=0.005, ha="left",
+                 fontsize=13, fontweight="bold", color=theme["primary"])
+    fig.tight_layout(rect=(0, 0, 1, 0.925))
+    save(fig, "rolling-beta", theme)
+
+
 def fig_confidence_sweep(sweep, theme):
     fig, axes = plt.subplots(1, 2, figsize=(9.5, 4.0))
     c = sweep["confidence"]
@@ -325,6 +362,7 @@ def main() -> None:
         style(theme)
         fig_equity_curves(results, spy, theme)
         fig_drawdowns(results, theme)
+        fig_rolling_beta(results, spy, theme)
         fig_confidence_sweep(sweep, theme)
         fig_calibration(calib, theme)
         fig_concentration(books, theme)

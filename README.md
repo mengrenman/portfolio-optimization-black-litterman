@@ -208,6 +208,45 @@ title is scale-free and comparable across all three.
 </picture>
 
 
+### Market exposure over time
+
+Returns alone do not say whether a strategy earned its result or simply took more market risk.
+A rolling 252-day beta against SPY separates the two, and needs no alpha estimate or factor
+model to do it.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/rolling-beta-dark.png">
+  <img alt="Rolling 252-day beta against SPY for each strategy across the three case studies. Buffett falls from about 1.3 to below 0.8 over the period with both overlays below the disclosed book throughout. Pelosi's disclosed book runs a median beta of 1.34 while the overlays track lower and end below 1. The Trump disclosed line is near zero until late 2021 and then climbs past 1.6, while both overlays stay between 0.3 and 0.6." src="docs/figures/rolling-beta.png">
+</picture>
+
+Median beta over the backtest:
+
+| Person | Disclosed | Mean-variance | Black-Litterman |
+|---|---:|---:|---:|
+| Buffett | 0.95 | 0.84 | 0.79 |
+| Pelosi | 1.34 | 1.11 | 1.08 |
+| Trump | 0.81 | 0.42 | 0.35 |
+
+- **Both overlays cut market exposure in every case**, which is the clearest thing they
+  demonstrably do. The effect is largest for Trump, where the median falls from 0.81 to 0.35.
+- **Pelosi's headline number is substantially a beta story.** That book returned 27.9% a year
+  against SPY's 14.6%, which reads as stock selection until you see it carried a median beta
+  of 1.34. A portfolio holding a third more market risk than the market should out-return it
+  in a rising decade.
+- **The overlays are also steadier.** Trump's disclosed beta spans 0.06 to 1.63 across the
+  backtest, a range of 1.57, while the Black-Litterman line stays inside 0.07 to 0.66.
+
+Two caveats specific to this figure. The Trump disclosed line sits near 0.08 until DJT begins
+trading in September 2021, which is not low market exposure but the zero-fill described under
+[Backtest Semantics](#backtest-semantics): 91% of that book is a ticker with no returns yet.
+And SPY is itself 1.36% of the Trump disclosed portfolio, so that one line is very mildly
+regressed against itself. Neither applies to Buffett or Pelosi, who hold no SPY.
+
+This figure deliberately stops short of an alpha estimate. Notebook 4 computes one, but its
+sector factors fall back to proxies built from the portfolios' own holdings when an ETF is
+missing from the price file, so its alpha is not comparable across the three cases. A rolling
+beta against a single genuine benchmark avoids that.
+
 ### View confidence interpolates between the two baselines
 
 Because the equilibrium prior is implied from the disclosed weights, confidence sweeps the
