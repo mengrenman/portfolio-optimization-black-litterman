@@ -45,18 +45,27 @@ def _write_factor_attribution(
 ) -> None:
     """Write a factor-attribution table for one case study's three strategies.
 
-    Regresses each strategy's daily returns on the market factor alone
-    (CAPM) and on the FF3 and FF5 Fama-French factor frames (loaded from
+    Regresses each strategy's returns on the market factor alone (CAPM) and
+    on the FF3 and FF5 Fama-French factor frames (loaded from
     ``app_config.factors_dir`` with
     the default ``derive_daily_rf=True``) and writes the combined table to
     ``<output_dir>/factor_attribution.csv``. Skipped silently (with a debug
     log line) when ``app_config.factors_dir`` is not configured.
 
+    :func:`~portfolio_bl.backtest.attribution.factor_regression` refuses to
+    regress returns whose inferred frequency differs from the (daily)
+    bundled factors' -- meaningless otherwise, since a non-daily return
+    would then be regressed against a single day's factor values per
+    period. When that happens (e.g. the case study's prices are monthly),
+    this function logs a warning and skips writing
+    ``factor_attribution.csv`` instead of raising, since the case study's
+    other outputs are already written by the caller by that point.
+
     Args:
         app_config: Application configuration; only used when
             ``factors_dir`` is set.
         result: The case study's outputs, supplying the three strategies'
-            daily return series.
+            return series.
         output_dir: Directory to write ``factor_attribution.csv`` into.
     """
     if app_config.factors_dir is None:
@@ -70,7 +79,12 @@ def _write_factor_attribution(
         for model in ("capm", "ff3", "ff5")
     }
 
-    table = attribution_table(returns_by_name, factor_sets, periods_per_year=periods_per_year)
+    try:
+        table = attribution_table(returns_by_name, factor_sets, periods_per_year=periods_per_year)
+    except ValueError as exc:
+        logger.warning("Skipping factor attribution: %s", exc)
+        return
+
     table.to_csv(output_dir / "factor_attribution.csv")
     logger.info("Saved factor attribution to: %s", output_dir / "factor_attribution.csv")
 

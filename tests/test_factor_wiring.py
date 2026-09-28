@@ -82,19 +82,26 @@ def _write_pipeline_and_factor_fixtures(tmp_path: Path) -> tuple[Path, pd.Dateti
     """Build tiny synthetic prices/disclosures/factor files.
 
     Follows the same fixture shape as
-    ``tests/test_pipeline_smoke.py::_write_smoke_fixtures`` (one person, three
-    tickers, monthly price dates), except price dates are business-month-end
-    (``BME``) rather than plain calendar month-end. The bundled
+    ``tests/test_pipeline_smoke.py::_write_smoke_fixtures`` (one person,
+    three tickers), except price dates are DAILY business days rather than
+    month-end. This test runs actual factor attribution
+    (:func:`~portfolio_bl.backtest.attribution.factor_regression`), which
+    refuses to regress returns against a factor frame of a different
+    inferred frequency -- and the bundled Fama-French factors are daily, so
+    the prices driving the strategy returns must be daily too (rebalancing
+    still happens monthly, via ``backtest.rebalance_frequency: "ME"``, same
+    as the real case studies; only the *return* frequency, not the
+    rebalance frequency, has to match the factors). The bundled
     ``ff3_daily.csv``/``ff5_daily.csv`` cover every business day of every
-    month the prices span (not just one row per month), and a matching
-    ``ff3_monthly.csv`` is included too: ``run_case_study`` now calls
-    ``load_fama_french(factors_dir, "capm")`` with its default
+    month the prices span (not just the price dates themselves), and a
+    matching ``ff3_monthly.csv`` is included too: ``run_case_study`` now
+    calls ``load_fama_french(factors_dir, "capm")`` with its default
     ``derive_daily_rf=True`` whenever ``factors_dir`` is configured, which
     requires a complete first and last month (see
-    ``portfolio_bl.data.factors.load_fama_french``). Using business-day dates
-    for both prices and factors also means every strategy return date has an
-    exact matching daily factor row, so the regression sample stays fully
-    overlapping.
+    ``portfolio_bl.data.factors.load_fama_french``). Using business-day
+    dates for both prices and factors also means every strategy return date
+    has an exact matching daily factor row, so the regression sample stays
+    fully overlapping.
 
     Args:
         tmp_path: Directory to write the fixtures into.
@@ -111,7 +118,10 @@ def _write_pipeline_and_factor_fixtures(tmp_path: Path) -> tuple[Path, pd.Dateti
         }
     )
 
-    dates = pd.date_range("2024-01-01", periods=18, freq="BME")
+    # About 21 months of daily business days: enough for the 6-month
+    # (backtest.lookback_periods, counted in monthly rebalance intervals, not
+    # daily rows) lookback plus many monthly rebalances left over.
+    dates = pd.bdate_range("2024-01-01", periods=440)
     rng = np.random.default_rng(0)
     base_prices = {"AAPL": 100.0, "MSFT": 90.0, "XOM": 70.0}
     rows = []

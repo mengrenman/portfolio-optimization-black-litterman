@@ -87,6 +87,140 @@ def annualized_volatility(returns: pd.Series, periods_per_year: int) -> float:
     return float(returns.std(ddof=1) * np.sqrt(periods_per_year))
 
 
+def risk_free_per_period(
+    daily_risk_free: pd.Series, calendar: pd.DatetimeIndex
+) -> pd.Series:
+    """Compound a daily risk-free series into one rate per period of ``calendar``.
+
+    ``daily_risk_free`` (one rate per NYSE trading day, e.g. from
+    ``load_fama_french(factors_dir, "capm")["rf"]``) cannot be reindexed
+    directly onto a non-daily return-date index: reindexing samples a single
+    day's rate per period instead of compounding every day in it, which
+    charges roughly ``1/periods_per_year`` of the true period rate. This
+    function does the compounding properly: for consecutive calendar dates
+    ``calendar[i-1] < calendar[i]``, the returned rate for period ``i`` is
+    ``prod(1 + r_t) - 1`` over every daily rate ``r_t`` dated in the
+    half-open interval ``(calendar[i-1], calendar[i]]`` -- including days
+    that fall between two calendar dates but are not calendar dates
+    themselves (e.g. every business day of a month, when ``calendar`` holds
+    only month-end dates).
+
+    Internally this evaluates a cumulative log-growth index (``cumsum`` of
+    ``log1p(daily_risk_free)``) "as of" each calendar date, so a period's
+    rate is exact regardless of how many daily rates fall inside it. Days
+    strictly inside ``daily_risk_free``'s date range that are missing from
+    it are assumed to not exist (not to accrue zero return) -- the loader
+    this is designed for never leaves such internal holes, one row per NYSE
+    trading day, so this is a safe assumption; it is only the calendar's
+    reach *outside* the daily series' coverage that is handled explicitly,
+    described next.
+
+    When a period's span extends before ``daily_risk_free``'s first date or
+    after its last (for example because prices were refreshed past the
+    bundled factor file's last month), the missing days are extended at the
+    nearest available daily rate -- the first rate for days before coverage,
+    the last for days after -- compounded over the number of *business* days
+    (via :func:`numpy.busday_count`) in the missing span. Every period that
+    needed such an extension is folded into a single warning.
+
+    Args:
+        daily_risk_free: Daily risk-free-rate series (decimal, not percent),
+            indexed by date. NaN values are dropped and the index is sorted
+            before use.
+        calendar: Dates bounding the periods to compound onto, typically a
+            strategy's price-date index (so ``calendar[0]`` is the opening
+            boundary of the first return period). Sorted and de-duplicated
+            before use.
+
+    Returns:
+        A Series indexed by ``calendar[1:]`` (after sorting/de-duplication)
+        holding one compounded rate per period. Empty (with an empty
+        ``DatetimeIndex``) when ``calendar`` has fewer than two distinct,
+        non-null dates.
+
+    Raises:
+        ValueError: If ``daily_risk_free`` is empty (after dropping NaNs), or
+            if no period spanned by ``calendar`` overlaps ``daily_risk_free``'s
+            date coverage at all.
+    """
+    daily = daily_risk_free.dropna().sort_index()
+    if daily.empty:
+        raise ValueError("daily_risk_free has no non-null observations.")
+
+    cal = pd.DatetimeIndex(calendar)
+    cal = cal[~cal.isna()]
+    cal = pd.DatetimeIndex(pd.unique(cal)).sort_values()
+
+    if len(cal) < 2:
+        return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+
+    d_min = daily.index[0]
+    d_max = daily.index[-1]
+    if cal[-1] < d_min or cal[0] > d_max:
+        raise ValueError(
+            f"No period spanned by the calendar ({cal[0].date()}..{cal[-1].date()}) "
+            f"overlaps the daily risk-free series' coverage ({d_min.date()}..{d_max.date()})."
+        )
+
+    log_rate = np.log1p(daily.to_numpy())
+    cum_log_growth = np.cumsum(log_rate)
+    idx_values = daily.index.to_numpy()
+    cal_values = cal.to_numpy()
+
+    before_mask = cal_values < d_min.to_numpy()
+    after_mask = cal_values > d_max.to_numpy()
+    within_mask = ~before_mask & ~after_mask
+
+    # Cumulative log growth "as of" each calendar date: for dates within the
+    # daily series' coverage this is the plain asof sum of every daily rate
+    # dated on or before that date -- taking the difference between two such
+    # values therefore sums exactly the daily rates dated in between.
+    s_values = np.empty(len(cal), dtype=float)
+    if within_mask.any():
+        positions = np.searchsorted(idx_values, cal_values[within_mask], side="right") - 1
+        s_values[within_mask] = cum_log_growth[positions]
+
+    # Outside coverage, extend at the nearest boundary rate over the number
+    # of business days in the missing span. Shifting both ends of the
+    # np.busday_count interval by one calendar day turns its half-open
+    # [begin, end) convention into the (excluded start, included end] this
+    # function wants, in both directions.
+    one_day = np.timedelta64(1, "D")
+    if before_mask.any():
+        before_days = cal_values[before_mask].astype("datetime64[D]")
+        d_min_day = d_min.to_numpy().astype("datetime64[D]")
+        n_bd = np.busday_count(before_days + one_day, d_min_day + one_day)
+        s_values[before_mask] = cum_log_growth[0] - log_rate[0] * n_bd
+
+    if after_mask.any():
+        after_days = cal_values[after_mask].astype("datetime64[D]")
+        d_max_day = d_max.to_numpy().astype("datetime64[D]")
+        n_bd = np.busday_count(d_max_day + one_day, after_days + one_day)
+        s_values[after_mask] = cum_log_growth[-1] + log_rate[-1] * n_bd
+
+    period_ends = cal[1:]
+    period_rates = np.exp(s_values[1:] - s_values[:-1]) - 1.0
+
+    extended = before_mask | after_mask
+    period_extended = extended[1:] | extended[:-1]
+    n_extended = int(period_extended.sum())
+    if n_extended > 0:
+        extended_ends = period_ends[period_extended]
+        logger.warning(
+            "%d of %d period(s) extend beyond the daily risk-free series' coverage "
+            "(%s..%s); extended using the nearest boundary daily rate over the "
+            "missing business days (first extended period ends %s, last %s).",
+            n_extended,
+            len(period_ends),
+            d_min.date(),
+            d_max.date(),
+            extended_ends.min().date(),
+            extended_ends.max().date(),
+        )
+
+    return pd.Series(period_rates, index=period_ends)
+
+
 def annualized_risk_free(
     risk_free: pd.Series, index: pd.DatetimeIndex, periods_per_year: int
 ) -> float:
@@ -96,6 +230,15 @@ def annualized_risk_free(
     it with :func:`annualized_return`, so the result is directly comparable
     with a strategy's ``annualized_return`` computed over the same dates.
 
+    ``risk_free`` must already hold exactly one rate per return period of
+    ``index`` -- this function does no frequency conversion of its own. In
+    particular, do **not** pass a *daily* risk-free series here when
+    ``index`` is a monthly (or weekly, or any non-daily) return-date index:
+    reindexing would silently keep only one day's rate per period, charging
+    roughly ``1/periods_per_year_of_the_daily_series`` of the true period
+    rate. Use :func:`risk_free_per_period` first to compound a daily series
+    into one rate per period of ``index``, then pass that result here.
+
     Some of ``index`` may fall outside ``risk_free``'s coverage -- for
     example when prices have been refreshed past the bundled factor file's
     last month, which is normal because Ken French's data library publishes
@@ -104,7 +247,8 @@ def annualized_risk_free(
 
     Args:
         risk_free: Per-period risk-free-rate series (decimal, not percent),
-            indexed by date.
+            indexed by date, with one rate per period of ``index`` (see
+            :func:`risk_free_per_period` to derive this from a daily series).
         index: Dates to annualize the risk-free rate over, typically a
             strategy's return-series index.
         periods_per_year: Number of return periods per calendar year.

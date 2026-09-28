@@ -15,6 +15,7 @@ from portfolio_bl.backtest.metrics import (
     concentration_hhi,
     infer_periods_per_year,
     max_drawdown,
+    risk_free_per_period,
     sharpe_ratio,
     sortino_ratio,
     summarize_strategy,
@@ -173,6 +174,187 @@ def test_annualized_risk_free_empty_index_returns_zero() -> None:
     idx = pd.DatetimeIndex([])
     rf = pd.Series([0.001], index=pd.to_datetime(["2024-01-31"]))
     assert annualized_risk_free(rf, idx, periods_per_year=12) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# risk_free_per_period
+# ---------------------------------------------------------------------------
+
+
+def test_risk_free_per_period_daily_calendar_reproduces_daily_rates() -> None:
+    """A calendar equal to the rate dates themselves is a no-op conversion."""
+    idx = pd.bdate_range("2024-01-01", periods=10)
+    rf = pd.Series(np.linspace(0.0001, 0.0002, 10), index=idx)
+
+    result = risk_free_per_period(rf, idx)
+
+    assert result.index.equals(idx[1:])
+    np.testing.assert_allclose(result.to_numpy(), rf.iloc[1:].to_numpy(), atol=1e-15)
+
+
+def test_risk_free_per_period_month_end_calendar_compounds_every_daily_rate() -> None:
+    """Every daily rate in a month must be compounded, not just one sampled day.
+
+    Includes rate dates that fall between two calendar dates but are not
+    themselves calendar dates (ordinary business days within a month whose
+    boundaries are the month-end dates), which is exactly the case the
+    reindex-based approach silently mishandles.
+    """
+    daily_idx = pd.bdate_range("2024-01-01", "2024-03-29")
+    rng = np.random.default_rng(1)
+    rf = pd.Series(rng.normal(0.0002, 0.00005, len(daily_idx)), index=daily_idx)
+    # calendar[0] is the opening boundary, exactly the first daily date, so no
+    # extension is needed and this test isolates the within-coverage grouping.
+    calendar = pd.to_datetime(["2024-01-01", "2024-01-31", "2024-02-29", "2024-03-29"])
+
+    result = risk_free_per_period(rf, calendar)
+
+    expected = []
+    prev = calendar[0]
+    for end in calendar[1:]:
+        mask = (rf.index > prev) & (rf.index <= end)
+        expected.append(float(np.prod(1.0 + rf[mask].to_numpy()) - 1.0))
+        prev = end
+
+    assert result.index.equals(calendar[1:])
+    np.testing.assert_allclose(result.to_numpy(), expected, atol=1e-12)
+
+
+def test_risk_free_per_period_is_frequency_invariant_when_annualized() -> None:
+    """The whole point of this function: annualizing must not depend on how
+    the same underlying daily rates happen to be grouped into periods.
+
+    252 daily rates are grouped two ways over the exact same span: as 252
+    daily periods (periods_per_year=252) and as 12 periods of exactly 21
+    daily rates each (periods_per_year=12) -- so both annualizations reduce
+    to the same total compounded growth over the same one "year". They must
+    agree to floating-point precision.
+
+    The same computation with the *old* approach -- reindexing the raw daily
+    series directly onto the month-end dates, so only one arbitrary day's
+    rate represents each ~21-day period -- is also shown here, and comes out
+    roughly 21x too small, which is the bug this function fixes.
+    """
+    bdays = pd.bdate_range("2024-01-01", periods=253)  # 252 periods + 1 opening boundary
+    rng = np.random.default_rng(2)
+    rf = pd.Series(rng.normal(0.0001, 0.00002, len(bdays)), index=bdays)
+
+    daily_calendar = bdays
+    month_end_calendar = bdays[::21]  # 13 points -> 12 periods of 21 days each
+    assert len(month_end_calendar) == 13
+
+    per_daily = risk_free_per_period(rf, daily_calendar)
+    per_month_end = risk_free_per_period(rf, month_end_calendar)
+    assert len(per_daily) == 252
+    assert len(per_month_end) == 12
+
+    ann_daily = annualized_risk_free(per_daily, per_daily.index, periods_per_year=252)
+    ann_month_end = annualized_risk_free(per_month_end, per_month_end.index, periods_per_year=12)
+    assert ann_daily == pytest.approx(ann_month_end, abs=1e-12)
+
+    # The old, wrong approach: annualized_risk_free called directly on the raw
+    # daily series over the month-end dates, which reindexes and so keeps only
+    # one day's rate per ~21-day period.
+    old_wrong = annualized_risk_free(rf, month_end_calendar[1:], periods_per_year=12)
+    assert old_wrong < ann_month_end / 15  # roughly 1/21 of the true rate
+
+
+def test_risk_free_per_period_extends_after_coverage_with_one_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    daily_idx = pd.bdate_range("2024-01-01", periods=5)  # Mon 1/1 .. Fri 1/5
+    rf = pd.Series(0.0001, index=daily_idx)
+    # 1/12 is 5 business days after the last covered date, 1/5.
+    calendar = pd.to_datetime(["2024-01-01", "2024-01-12"])
+
+    with caplog.at_level(logging.WARNING, logger="portfolio_bl.backtest.metrics"):
+        result = risk_free_per_period(rf, calendar)
+
+    n_bd_after = int(
+        np.busday_count(
+            np.datetime64("2024-01-05", "D") + np.timedelta64(1, "D"),
+            np.datetime64("2024-01-12", "D") + np.timedelta64(1, "D"),
+        )
+    )
+    # 4 real daily rates (1/2..1/5) plus the extension at the last rate.
+    expected = (1.0001) ** (4 + n_bd_after) - 1.0
+    assert result.iloc[0] == pytest.approx(expected)
+
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warning_records) == 1
+    message = warning_records[0].getMessage()
+    assert "1 of 1" in message
+    assert "2024-01-12" in message
+
+
+def test_risk_free_per_period_extends_before_coverage_symmetrically(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    daily_idx = pd.bdate_range("2024-01-01", periods=5)  # Mon 1/1 .. Fri 1/5
+    rf = pd.Series(0.0001, index=daily_idx)
+    # 2023-12-22 is 6 business days before the first covered date, 1/1.
+    calendar = pd.to_datetime(["2023-12-22", "2024-01-05"])
+
+    with caplog.at_level(logging.WARNING, logger="portfolio_bl.backtest.metrics"):
+        result = risk_free_per_period(rf, calendar)
+
+    n_bd_before = int(
+        np.busday_count(
+            np.datetime64("2023-12-22", "D") + np.timedelta64(1, "D"),
+            np.datetime64("2024-01-01", "D") + np.timedelta64(1, "D"),
+        )
+    )
+    # 1/1 falls inside the extension's own business-day count (it is the
+    # nearest available rate the extension uses), and 1/2..1/5 are the
+    # remaining 4 real daily rates actually inside (cal0, 1/5].
+    expected = (1.0001) ** (n_bd_before + 4) - 1.0
+    assert result.iloc[0] == pytest.approx(expected)
+
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warning_records) == 1
+    assert "1 of 1" in warning_records[0].getMessage()
+
+
+def test_risk_free_per_period_no_overlap_raises() -> None:
+    rf = pd.Series([0.0001], index=pd.to_datetime(["2020-01-01"]))
+    calendar = pd.to_datetime(["2024-01-01", "2024-02-01"])
+    with pytest.raises(ValueError, match="No period spanned by the calendar"):
+        risk_free_per_period(rf, calendar)
+
+
+def test_risk_free_per_period_empty_daily_series_raises() -> None:
+    rf = pd.Series([], dtype=float)
+    calendar = pd.to_datetime(["2024-01-01", "2024-02-01"])
+    with pytest.raises(ValueError, match="no non-null observations"):
+        risk_free_per_period(rf, calendar)
+
+
+def test_risk_free_per_period_short_calendar_returns_empty() -> None:
+    rf = pd.Series([0.0001], index=pd.to_datetime(["2024-01-01"]))
+
+    empty_calendar = pd.DatetimeIndex([])
+    result_empty = risk_free_per_period(rf, empty_calendar)
+    assert result_empty.empty
+
+    single_date_calendar = pd.to_datetime(["2024-01-01"])
+    result_single = risk_free_per_period(rf, single_date_calendar)
+    assert result_single.empty
+
+
+def test_risk_free_per_period_drops_nan_and_handles_unsorted_calendar() -> None:
+    rf = pd.Series(
+        [0.0001, np.nan, 0.0002, 0.0003],
+        index=pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"]),
+    )
+    # Deliberately unsorted; also exercises the opening-boundary date being
+    # last in input order.
+    unsorted_calendar = pd.to_datetime(["2024-01-04", "2024-01-01"])
+
+    result = risk_free_per_period(rf, unsorted_calendar)
+
+    assert list(result.index) == [pd.Timestamp("2024-01-04")]
+    expected = (1.0002) * (1.0003) - 1.0
+    assert result.iloc[0] == pytest.approx(expected)
 
 
 # ---------------------------------------------------------------------------

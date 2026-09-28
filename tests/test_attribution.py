@@ -413,6 +413,41 @@ def test_missing_rf_column_raises() -> None:
         factor_regression(returns, factors)
 
 
+def test_monthly_returns_against_daily_factors_raises() -> None:
+    """Regressing a non-daily return series against the daily bundled
+    factors would otherwise join silently: the inner join matches returns
+    only to the factor rows dated on exactly the same day, so a monthly
+    return ends up regressed on a single day's factor values per month.
+    That must be refused before it produces a meaningless-but-plausible-
+    looking result.
+    """
+    rng = np.random.default_rng(15)
+    n_daily = 400
+    factors = _make_ff3(rng, n_daily)  # daily, freq="B" -> 252 periods/year
+
+    monthly_dates = pd.date_range("2020-01-31", periods=18, freq="ME")
+    returns = pd.Series(rng.normal(0.01, 0.02, len(monthly_dates)), index=monthly_dates)
+
+    with pytest.raises(ValueError, match="12 period.*252|252 period.*12"):
+        factor_regression(returns, factors)
+
+
+def test_matching_daily_frequencies_do_not_raise() -> None:
+    """Sanity check for the frequency guard: identical (daily) frequencies
+    must not be refused, even though the actual dates barely overlap.
+    """
+    rng = np.random.default_rng(16)
+    factors = _make_ff3(rng, 400)
+    other_daily_dates = pd.bdate_range(factors.index[-2], periods=400)
+    returns = pd.Series(rng.normal(0.0, 0.01, 400), index=other_daily_dates)
+
+    # Only the last 2 dates of `factors` and the first 2 of `returns`
+    # overlap; this must fail on "too few observations", not the frequency
+    # guard, proving the guard did not fire for two same-frequency series.
+    with pytest.raises(ValueError, match="aligned observation"):
+        factor_regression(returns, factors)
+
+
 def test_reordering_factor_columns_preserves_loadings_by_name() -> None:
     rng = np.random.default_rng(12)
     n = 800

@@ -12,10 +12,12 @@ from portfolio_bl.backtest.metrics import (
     annualized_risk_free,
     annualized_volatility,
     infer_periods_per_year,
+    risk_free_per_period,
     summarize_strategy,
 )
 from portfolio_bl.config import load_config
 from portfolio_bl.data.factors import load_fama_french
+from portfolio_bl.data.prices import load_prices_csv
 from portfolio_bl.pipeline import run_case_study
 
 
@@ -239,6 +241,15 @@ def test_pipeline_risk_free_rate_zero_without_factors_dir(tmp_path: Path) -> Non
 
 
 def test_pipeline_with_factors_dir_charges_risk_free_rate(tmp_path: Path) -> None:
+    """This fixture's prices are MONTHLY (BME) -- exactly the case the
+    reindex-based risk-free charge got wrong: reindexing the daily T-bill
+    series directly onto monthly return dates kept only one of ~21 days'
+    rates per month, charging roughly 1/21 of the true monthly rate.
+    ``risk_free_rate`` must reflect the true annualized rate of the
+    synthetic T-bill -- a constant 0.2% a month (``ff3_monthly.csv`` in
+    :func:`_write_smoke_fixtures_with_factors_dir`), i.e. about
+    ``(1.002)**12 - 1`` -- not that ~1/21-of-it value.
+    """
     config_path = _write_smoke_fixtures_with_factors_dir(tmp_path)
     app_config = load_config(config_path)
     assert app_config.factors_dir is not None
@@ -246,16 +257,31 @@ def test_pipeline_with_factors_dir_charges_risk_free_rate(tmp_path: Path) -> Non
     result = run_case_study(app_config, person_key="buffett")
     assert result.risk_free_rate > 0.0
 
-    risk_free_series = load_fama_french(app_config.factors_dir, "capm")["rf"]
+    prices = load_prices_csv(app_config.prices_path)
+    price_dates = pd.DatetimeIndex(sorted(prices["date"].unique()))
+    daily_risk_free = load_fama_french(app_config.factors_dir, "capm")["rf"]
+    risk_free_series = risk_free_per_period(daily_risk_free, price_dates)
+
     periods_per_year = infer_periods_per_year(
         next(iter(result.strategy_results.values())).returns.index
     )
+    assert periods_per_year == 12
 
     disclosed = result.strategy_results["disclosed"]
     expected_risk_free_rate = annualized_risk_free(
         risk_free_series, disclosed.returns.index, periods_per_year
     )
     assert result.risk_free_rate == pytest.approx(expected_risk_free_rate)
+
+    true_annual_rate = 1.002**12 - 1.0
+    assert result.risk_free_rate == pytest.approx(true_annual_rate, rel=1e-6)
+
+    # The old, wrong approach: reindexing the raw daily series directly onto
+    # the monthly return dates, keeping one arbitrary day's rate per month.
+    old_wrong_rate = annualized_risk_free(
+        daily_risk_free, disclosed.returns.index, periods_per_year
+    )
+    assert old_wrong_rate < result.risk_free_rate / 15
 
     for name, sr in result.strategy_results.items():
         rf_annual = annualized_risk_free(risk_free_series, sr.returns.index, periods_per_year)

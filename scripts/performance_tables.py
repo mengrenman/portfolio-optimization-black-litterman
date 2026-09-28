@@ -47,6 +47,7 @@ from portfolio_bl.backtest.metrics import (
     annualized_volatility,
     infer_periods_per_year,
     max_drawdown,
+    risk_free_per_period,
     sharpe_ratio,
 )
 from portfolio_bl.config import AppConfig, load_config
@@ -130,9 +131,19 @@ def _markdown_table(header: list[str], aligns: str, rows: list[list[str]]) -> st
 def _rf_annual_fn(app_config: AppConfig, zero_rf: bool):
     """Build a function computing the annualized risk-free rate over a date index.
 
+    The daily T-bill series is loaded once and converted, once, into one
+    compounded rate per date of the price calendar (every date in
+    ``app_config.prices_path``, via :func:`~portfolio_bl.backtest.metrics.risk_free_per_period`)
+    -- exactly as :func:`~portfolio_bl.pipeline.run_case_study` now does.
+    Reindexing the raw daily series directly onto a non-daily ``index``
+    (e.g. monthly return dates) would silently keep only one day's rate per
+    period instead of compounding every day in it; converting once over the
+    price calendar avoids that regardless of what ``index`` the returned
+    function is later called with.
+
     Args:
-        app_config: Application configuration; ``app_config.factors_dir`` is
-            used to load the daily T-bill series when ``zero_rf`` is
+        app_config: Application configuration; ``app_config.factors_dir``
+            and ``app_config.prices_path`` are used when ``zero_rf`` is
             ``False``.
         zero_rf: When ``True``, the returned function always returns 0.0
             without touching ``app_config.factors_dir``.
@@ -144,7 +155,10 @@ def _rf_annual_fn(app_config: AppConfig, zero_rf: bool):
     if zero_rf or app_config.factors_dir is None:
         return lambda index, periods_per_year: 0.0
 
-    risk_free_series = load_fama_french(app_config.factors_dir, "capm")["rf"]
+    daily_risk_free = load_fama_french(app_config.factors_dir, "capm")["rf"]
+    prices = load_prices_csv(app_config.prices_path)
+    price_dates = pd.DatetimeIndex(sorted(prices["date"].unique()))
+    risk_free_series = risk_free_per_period(daily_risk_free, price_dates)
 
     def _fn(index: pd.DatetimeIndex, periods_per_year: int) -> float:
         return annualized_risk_free(risk_free_series, index, periods_per_year)

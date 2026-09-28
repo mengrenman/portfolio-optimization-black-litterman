@@ -959,11 +959,12 @@ skips factor attribution silently, Sharpe and Sortino fall back to a zero risk-f
 standalone attribution script raises an error. If the price data runs past the factor files'
 last month, which is normal after a refresh because French publishes with a lag, the missing
 days take the nearest available rate (and any days before the files begin take the first one).
-`run_case_study.py` and `performance_tables.py` log a warning with the count, once per
-strategy and table, so it repeats; `make_figures.py` and `factor_attribution.py` switch logging
-off, so run one of the first two after a refresh. Factor attribution does not fill: it drops the
-uncovered days, so until the factor files are refreshed its sample is shorter than the Sharpe
-ratios'. Nothing caps the gap, and the error depends on how far rates move while the files lag.
+`run_case_study.py` and `performance_tables.py` each convert the daily rate to one compounded
+value per price date once per run and log a single warning with the count of periods that
+needed it; `make_figures.py` and `factor_attribution.py` switch logging off, so run one of the
+first two after a refresh. Factor attribution does not fill: it drops the uncovered days, so
+until the factor files are refreshed its sample is shorter than the Sharpe ratios'. Nothing caps
+the gap, and the error depends on how far rates move while the files lag.
 Dropping the last two months of the bundled files moves the annualized rate over this backtest by
 0.003 percentage points, and dropping three years moves it by 0.3, but a two-month gap while
 rates are moving fast, as after the March 2020 cuts, would move it far more.

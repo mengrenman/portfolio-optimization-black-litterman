@@ -10,6 +10,7 @@ from portfolio_bl.backtest.engine import BacktestResult, rolling_backtest
 from portfolio_bl.backtest.metrics import (
     annualized_risk_free,
     infer_periods_per_year,
+    risk_free_per_period,
     summarize_strategy,
 )
 from portfolio_bl.config import AppConfig
@@ -41,7 +42,9 @@ class CaseStudyResult:
         summary: DataFrame of performance metrics (strategies × metrics).
         risk_free_rate: The annualized risk-free rate charged in Sharpe and
             Sortino (see :func:`~portfolio_bl.backtest.metrics.summarize_strategy`),
-            computed over the disclosed strategy's return dates. ``0.0`` when
+            annualized from the price-calendar per-period series (see
+            :func:`~portfolio_bl.backtest.metrics.risk_free_per_period`) over
+            the disclosed strategy's return dates. ``0.0`` when
             ``app_config.factors_dir`` is not configured.
     """
 
@@ -85,13 +88,24 @@ def run_case_study(
       explicit views.
 
     When ``app_config.factors_dir`` is configured, each strategy's Sharpe and
-    Sortino ratios are net of the daily T-bill rate: the daily risk-free
-    series is loaded once via
-    :func:`~portfolio_bl.data.factors.load_fama_french` and charged as the
-    numerator's hurdle (see
-    :func:`~portfolio_bl.backtest.metrics.summarize_strategy`). When it is
-    not configured, both ratios use a zero risk-free rate, unchanged from
-    before this feature existed.
+    Sortino ratios are net of the T-bill rate: the daily risk-free series is
+    loaded once via :func:`~portfolio_bl.data.factors.load_fama_french` and
+    converted, once, into one compounded rate per price date via
+    :func:`~portfolio_bl.backtest.metrics.risk_free_per_period` (the price
+    calendar -- every date in the loaded prices, including the opening date
+    that bounds the first return -- not the return dates of any one
+    strategy, since strategies can start their return history on different
+    dates). That per-period series is what gets charged as the numerator's
+    hurdle in every strategy's Sharpe and Sortino (see
+    :func:`~portfolio_bl.backtest.metrics.summarize_strategy`) and is what
+    :attr:`CaseStudyResult.risk_free_rate` annualizes. This conversion is
+    what makes the risk-free charge correct when the backtest runs at a
+    frequency other than daily (e.g. monthly rebalancing on monthly prices):
+    charging the raw daily series directly, by reindexing it to the
+    strategy's own (non-daily) return dates, would silently keep only one
+    day's rate per period instead of compounding every day in it. When
+    ``factors_dir`` is not configured, both ratios use a zero risk-free
+    rate, unchanged from before this feature existed.
 
     The ``view_confidence`` argument controls how strongly views override the
     BL equilibrium prior. It applies to the sample-mean views and to any
@@ -134,6 +148,14 @@ def run_case_study(
 
     prices = load_prices_csv(app_config.prices_path)
     returns = to_return_matrix(prices)
+    # Every date in the loaded prices, sorted and de-duplicated -- exactly the
+    # index of the pivot to_return_matrix builds internally, including the
+    # first price date (the opening boundary of the first return, which
+    # to_return_matrix's own pct_change().dropna(how="all") drops from
+    # `returns`). This is the calendar risk_free_per_period compounds the
+    # daily risk-free series onto below, independent of any one strategy's
+    # own return dates.
+    price_dates = pd.DatetimeIndex(sorted(prices["date"].unique()))
 
     universe = sorted(set(latest_disclosed["ticker"]).intersection(returns.columns))
     if len(universe) < 2:
@@ -287,7 +309,11 @@ def run_case_study(
 
     if app_config.factors_dir is not None:
         logger.info("Loading daily risk-free series from %s.", app_config.factors_dir)
-        risk_free_series = load_fama_french(app_config.factors_dir, "capm")["rf"]
+        daily_risk_free = load_fama_french(app_config.factors_dir, "capm")["rf"]
+        # Convert once, over the price calendar (not any one strategy's return
+        # dates), so every strategy is charged the same correctly-compounded
+        # per-period rate regardless of the backtest's frequency.
+        risk_free_series = risk_free_per_period(daily_risk_free, price_dates)
     else:
         risk_free_series = None
 

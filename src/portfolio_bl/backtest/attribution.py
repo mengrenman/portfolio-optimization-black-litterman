@@ -19,6 +19,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from portfolio_bl.backtest.metrics import infer_periods_per_year
+
 logger = logging.getLogger(__name__)
 
 
@@ -281,9 +283,13 @@ def factor_regression(
         A :class:`FactorRegression`.
 
     Raises:
-        ValueError: If ``rf_column`` is not a column of ``factors``, or if
-            fewer than ``len(factors columns) - 1 + 2`` observations remain
-            after aligning dates and dropping missing values.
+        ValueError: If ``rf_column`` is not a column of ``factors``; if
+            ``returns``' own inferred frequency (see
+            :func:`~portfolio_bl.backtest.metrics.infer_periods_per_year`,
+            applied to its non-null dates) differs from ``factors``' own
+            inferred frequency; or if fewer than
+            ``len(factors columns) - 1 + 2`` observations remain after
+            aligning dates and dropping missing values.
     """
     if rf_column not in factors.columns:
         raise ValueError(
@@ -293,6 +299,22 @@ def factor_regression(
     factor_names = tuple(c for c in factors.columns if c != rf_column)
 
     returns_valid = returns.dropna()
+
+    # A frequency mismatch (e.g. monthly returns against daily factors) would
+    # otherwise join silently: the inner join below matches returns only to
+    # the factor rows dated on exactly the same day, so a monthly return
+    # would end up regressed on a single day's factor values per month --
+    # meaningless, and not something the join's row count alone reveals.
+    # Catch it here, before any joining happens.
+    return_ppy = infer_periods_per_year(returns_valid.index)
+    factor_ppy = infer_periods_per_year(factors.index)
+    if return_ppy != factor_ppy:
+        raise ValueError(
+            f"returns has an inferred frequency of {return_ppy} period(s)/year but factors "
+            f"has {factor_ppy}; they must match to regress meaningfully (the bundled "
+            "Fama-French factors are daily, periods_per_year=252)."
+        )
+
     missing_dates = returns_valid.index.difference(factors.index)
     if len(missing_dates) > 0:
         missing_sorted = missing_dates.sort_values()
