@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import warnings
 
 import numpy as np
@@ -8,6 +9,7 @@ import pytest
 
 from portfolio_bl.backtest.metrics import (
     annualized_return,
+    annualized_risk_free,
     annualized_volatility,
     average_turnover,
     concentration_hhi,
@@ -114,6 +116,66 @@ def test_sortino_ratio_with_downside() -> None:
 
 
 # ---------------------------------------------------------------------------
+# annualized_risk_free
+# ---------------------------------------------------------------------------
+
+
+def test_annualized_risk_free_matches_hand_computed_geometric_annualization() -> None:
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31"])
+    rf = pd.Series([0.001, 0.0015, 0.0012], index=idx)
+    result = annualized_risk_free(rf, idx, periods_per_year=12)
+    expected = (1.001 * 1.0015 * 1.0012) ** (12 / 3) - 1.0
+    assert result == pytest.approx(expected)
+
+
+def test_annualized_risk_free_ignores_dates_outside_the_index() -> None:
+    """A risk-free series covering more dates than ``index`` must use only ``index``'s dates."""
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29"])
+    rf_full = pd.Series(
+        [0.05, 0.001, 0.0015, 0.05],
+        index=pd.to_datetime(["2023-12-31", "2024-01-31", "2024-02-29", "2024-03-31"]),
+    )
+    result = annualized_risk_free(rf_full, idx, periods_per_year=12)
+    expected = (1.001 * 1.0015) ** (12 / 2) - 1.0
+    assert result == pytest.approx(expected)
+
+
+def test_annualized_risk_free_partial_coverage_warns_once_and_fills(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31", "2024-04-30"])
+    # Only the first two dates are covered; the last two must be filled via
+    # ffill (both take the 2024-02-29 rate, since bfill has nothing after it).
+    rf = pd.Series([0.001, 0.0012], index=pd.to_datetime(["2024-01-31", "2024-02-29"]))
+
+    with caplog.at_level(logging.WARNING, logger="portfolio_bl.backtest.metrics"):
+        result = annualized_risk_free(rf, idx, periods_per_year=12)
+
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warning_records) == 1
+    message = warning_records[0].getMessage()
+    assert "2 of 4" in message
+    assert "2024-03-31" in message
+    assert "2024-04-30" in message
+
+    expected = (1.001 * 1.0012 * 1.0012 * 1.0012) ** (12 / 4) - 1.0
+    assert result == pytest.approx(expected)
+
+
+def test_annualized_risk_free_zero_coverage_raises() -> None:
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29"])
+    rf = pd.Series([0.001], index=pd.to_datetime(["2023-01-31"]))
+    with pytest.raises(ValueError, match="None of the 2"):
+        annualized_risk_free(rf, idx, periods_per_year=12)
+
+
+def test_annualized_risk_free_empty_index_returns_zero() -> None:
+    idx = pd.DatetimeIndex([])
+    rf = pd.Series([0.001], index=pd.to_datetime(["2024-01-31"]))
+    assert annualized_risk_free(rf, idx, periods_per_year=12) == 0.0
+
+
+# ---------------------------------------------------------------------------
 # sharpe_ratio
 # ---------------------------------------------------------------------------
 
@@ -204,3 +266,41 @@ def test_summarize_strategy_all_positive_returns_sortino_is_nan() -> None:
     returns = pd.Series([0.01, 0.02, 0.03, 0.01])
     summary = summarize_strategy(returns, WEIGHT_HISTORY.iloc[:4], periods_per_year=12)
     assert np.isnan(summary["sortino"])
+
+
+def test_summarize_strategy_risk_free_none_matches_direct_metric_calls() -> None:
+    """``risk_free=None`` must give exactly the same dict as calling the metrics directly."""
+    returns = pd.Series([0.01, 0.0, -0.01, 0.02, 0.01])
+    summary = summarize_strategy(returns, WEIGHT_HISTORY, periods_per_year=12, risk_free=None)
+    expected = {
+        "annual_return": annualized_return(returns, 12),
+        "annual_volatility": annualized_volatility(returns, 12),
+        "sharpe": sharpe_ratio(returns, 12),
+        "sortino": sortino_ratio(returns, 12),
+        "max_drawdown": max_drawdown(returns),
+        "hhi": concentration_hhi(WEIGHT_HISTORY),
+        "avg_turnover": average_turnover(WEIGHT_HISTORY),
+    }
+    assert summary == pytest.approx(expected, nan_ok=True)
+
+
+def test_summarize_strategy_with_constant_risk_free_matches_manual_formula() -> None:
+    # Two downside observations so the Sortino denominator is finite (not NaN),
+    # letting this test actually exercise the risk-free-adjusted numerator.
+    returns = pd.Series([0.02, -0.01, -0.02, 0.03, 0.01], index=MONTHLY_DATES)
+    risk_free = pd.Series(0.001, index=MONTHLY_DATES)
+
+    summary_rf = summarize_strategy(returns, WEIGHT_HISTORY, periods_per_year=12, risk_free=risk_free)
+    summary_plain = summarize_strategy(returns, WEIGHT_HISTORY, periods_per_year=12, risk_free=None)
+
+    rf_annual = annualized_risk_free(risk_free, returns.index, periods_per_year=12)
+    ann_ret = annualized_return(returns, 12)
+    ann_vol = annualized_volatility(returns, 12)
+    assert summary_rf["sharpe"] == pytest.approx((ann_ret - rf_annual) / ann_vol)
+
+    downside_vol = returns[returns < 0].std(ddof=1) * np.sqrt(12)
+    assert summary_rf["sortino"] == pytest.approx((ann_ret - rf_annual) / downside_vol)
+
+    # The other five metrics must be identical with and without risk_free.
+    for key in ["annual_return", "annual_volatility", "max_drawdown", "hhi", "avg_turnover"]:
+        assert summary_rf[key] == pytest.approx(summary_plain[key])

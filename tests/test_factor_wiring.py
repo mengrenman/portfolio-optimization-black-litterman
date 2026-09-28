@@ -83,8 +83,18 @@ def _write_pipeline_and_factor_fixtures(tmp_path: Path) -> tuple[Path, pd.Dateti
 
     Follows the same fixture shape as
     ``tests/test_pipeline_smoke.py::_write_smoke_fixtures`` (one person, three
-    tickers, monthly price dates), plus a synthetic FF3/FF5 daily factor pair
-    covering every price date so the regression sample is fully overlapping.
+    tickers, monthly price dates), except price dates are business-month-end
+    (``BME``) rather than plain calendar month-end. The bundled
+    ``ff3_daily.csv``/``ff5_daily.csv`` cover every business day of every
+    month the prices span (not just one row per month), and a matching
+    ``ff3_monthly.csv`` is included too: ``run_case_study`` now calls
+    ``load_fama_french(factors_dir, "capm")`` with its default
+    ``derive_daily_rf=True`` whenever ``factors_dir`` is configured, which
+    requires a complete first and last month (see
+    ``portfolio_bl.data.factors.load_fama_french``). Using business-day dates
+    for both prices and factors also means every strategy return date has an
+    exact matching daily factor row, so the regression sample stays fully
+    overlapping.
 
     Args:
         tmp_path: Directory to write the fixtures into.
@@ -101,7 +111,7 @@ def _write_pipeline_and_factor_fixtures(tmp_path: Path) -> tuple[Path, pd.Dateti
         }
     )
 
-    dates = pd.date_range("2024-01-31", periods=18, freq="ME")
+    dates = pd.date_range("2024-01-01", periods=18, freq="BME")
     rng = np.random.default_rng(0)
     base_prices = {"AAPL": 100.0, "MSFT": 90.0, "XOM": 70.0}
     rows = []
@@ -124,10 +134,16 @@ def _write_pipeline_and_factor_fixtures(tmp_path: Path) -> tuple[Path, pd.Dateti
     prices.to_csv(prices_path, index=False)
 
     # Synthetic FF3/FF5 daily factor files, in PERCENT units (load_factor_csv
-    # divides by 100), covering every price date so every strategy return
-    # date has a matching factor row.
-    date_strs = dates.strftime("%Y-%m-%d")
-    n = len(dates)
+    # divides by 100), covering every business day of every month the price
+    # dates span -- not just the price dates themselves -- so the derived
+    # daily risk-free rate (see ff3_monthly.csv below) has a complete first
+    # and last month, while every price date (itself a business day) still
+    # gets an exact matching factor row.
+    first_month_start = dates.min().replace(day=1)
+    last_month_end = dates.max() + pd.offsets.MonthEnd(0)
+    daily_dates = pd.bdate_range(first_month_start, last_month_end)
+    date_strs = daily_dates.strftime("%Y-%m-%d")
+    n = len(daily_dates)
     ff_common = {
         "date": date_strs,
         "Mkt-RF": rng.normal(0.05, 0.5, n),
@@ -143,6 +159,20 @@ def _write_pipeline_and_factor_fixtures(tmp_path: Path) -> tuple[Path, pd.Dateti
     # Preserve the pinned column order (factors before RF).
     ff5_ordered = pd.DataFrame(ff5)[["date", "Mkt-RF", "SMB", "HML", "RMW", "CMA", "RF"]]
     ff5_ordered.to_csv(factors_dir / "ff5_daily.csv", index=False)
+
+    # Monthly risk-free file used to derive the daily rf (derive_daily_rf=True,
+    # the pipeline's default): one row per calendar month spanned by the
+    # daily files above.
+    months = pd.period_range(first_month_start, last_month_end, freq="M")
+    pd.DataFrame(
+        {
+            "date": [str(m) for m in months],
+            "Mkt-RF": rng.normal(1.0, 1.0, len(months)),
+            "SMB": rng.normal(0.0, 0.5, len(months)),
+            "HML": rng.normal(0.0, 0.5, len(months)),
+            "RF": np.full(len(months), 0.2),
+        }
+    ).to_csv(factors_dir / "ff3_monthly.csv", index=False)
 
     config = {
         "data": {
@@ -176,6 +206,13 @@ def test_end_to_end_factor_attribution_wiring(tmp_path: Path) -> None:
     assert app_config.factors_dir is not None
 
     result = run_case_study(app_config, person_key="buffett")
+    # run_case_study calls load_fama_french(factors_dir, "capm") with its
+    # default derive_daily_rf=True to charge Sharpe/Sortino against the
+    # derived daily T-bill rate; the fixture's ff3_monthly.csv and complete
+    # first/last months (see _write_pipeline_and_factor_fixtures) make that
+    # succeed instead of raising, and the derived rate is strictly positive.
+    assert result.risk_free_rate > 0.0
+
     returns_by_name = {name: sr.returns for name, sr in result.strategy_results.items()}
     assert len(returns_by_name) == 3
 
@@ -188,11 +225,9 @@ def test_end_to_end_factor_attribution_wiring(tmp_path: Path) -> None:
     expected_n_obs = len(strategy_dates.intersection(price_dates))
     assert expected_n_obs == len(strategy_dates)
 
-    # derive_daily_rf=False: the synthetic price dates are month-end, so the
-    # "first row within 4 calendar days of the month" precondition for
-    # deriving the daily rf from a monthly file does not hold here; this test
-    # exercises the config -> loader -> attribution wiring, not that
-    # already-covered rf-derivation edge case (see tests/test_factors_data.py).
+    # derive_daily_rf=False here: this part of the test exercises the config
+    # -> loader -> attribution wiring with the published daily rf, not the
+    # rf-derivation edge cases (already covered in tests/test_factors_data.py).
     factor_sets = {
         model: load_fama_french(app_config.factors_dir, model=model, derive_daily_rf=False)
         for model in ("ff3", "ff5")

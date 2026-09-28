@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import warnings
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def infer_periods_per_year(index: pd.DatetimeIndex) -> int:
@@ -84,15 +87,79 @@ def annualized_volatility(returns: pd.Series, periods_per_year: int) -> float:
     return float(returns.std(ddof=1) * np.sqrt(periods_per_year))
 
 
+def annualized_risk_free(
+    risk_free: pd.Series, index: pd.DatetimeIndex, periods_per_year: int
+) -> float:
+    """Compute the geometric annualized risk-free rate over a set of dates.
+
+    Reindexes ``risk_free`` to exactly ``index`` and geometrically annualizes
+    it with :func:`annualized_return`, so the result is directly comparable
+    with a strategy's ``annualized_return`` computed over the same dates.
+
+    Some of ``index`` may fall outside ``risk_free``'s coverage -- for
+    example when prices have been refreshed past the bundled factor file's
+    last month, which is normal because Ken French's data library publishes
+    with a lag. Those dates are filled from the nearest available rate
+    (forward-fill, then back-fill for any still missing at the start).
+
+    Args:
+        risk_free: Per-period risk-free-rate series (decimal, not percent),
+            indexed by date.
+        index: Dates to annualize the risk-free rate over, typically a
+            strategy's return-series index.
+        periods_per_year: Number of return periods per calendar year.
+
+    Returns:
+        The geometric annualized risk-free rate over ``index``, or ``0.0``
+        if ``index`` is empty.
+
+    Raises:
+        ValueError: If none of the dates in ``index`` are covered by
+            ``risk_free``.
+    """
+    if len(index) == 0:
+        return 0.0
+
+    reindexed = risk_free.reindex(index)
+    missing = reindexed.isna()
+    n_missing = int(missing.sum())
+
+    if n_missing == len(index):
+        raise ValueError(
+            f"None of the {len(index)} requested date(s) are covered by the risk-free series."
+        )
+
+    if n_missing > 0:
+        missing_dates = index[missing]
+        logger.warning(
+            "%d of %d date(s) not covered by the risk-free series (first missing %s, "
+            "last missing %s); filling from the nearest available rate.",
+            n_missing,
+            len(index),
+            missing_dates.min().date(),
+            missing_dates.max().date(),
+        )
+        reindexed = reindexed.ffill().bfill()
+
+    return annualized_return(reindexed, periods_per_year)
+
+
 def sharpe_ratio(
     returns: pd.Series, periods_per_year: int, risk_free_rate: float = 0.0
 ) -> float:
     """Compute annualized Sharpe ratio.
 
+    The numerator is the geometric annualized return (see
+    :func:`annualized_return`) minus the geometric annualized risk-free rate
+    over the same dates (see :func:`annualized_risk_free`); the denominator
+    is unchanged: the annualized volatility of the raw returns.
+
     Args:
         returns: Period return series.
         periods_per_year: Number of return periods per calendar year.
-        risk_free_rate: Annualized risk-free rate used as the hurdle.
+        risk_free_rate: Geometric annualized risk-free rate, over the same
+            dates as ``returns``, used as the numerator's hurdle. Defaults to
+            0.0 (no risk-free adjustment).
 
     Returns:
         Sharpe ratio, or NaN if volatility is zero or not finite.
@@ -109,6 +176,13 @@ def sortino_ratio(
 ) -> float:
     """Compute annualized Sortino ratio.
 
+    The numerator is the geometric annualized return (see
+    :func:`annualized_return`) minus the geometric annualized risk-free rate
+    over the same dates (see :func:`annualized_risk_free`), exactly as in
+    :func:`sharpe_ratio`. The denominator is unchanged: downside deviation
+    computed from returns below zero -- that threshold stays at zero, not
+    the risk-free rate, unlike the numerator.
+
     Unlike the Sharpe ratio, Sortino penalizes only downside volatility
     (returns below zero). Returns NaN — rather than +Inf — when no negative
     returns exist. This edge case is common in short bull-market windows and
@@ -117,7 +191,9 @@ def sortino_ratio(
     Args:
         returns: Period return series.
         periods_per_year: Number of return periods per calendar year.
-        risk_free_rate: Annualized risk-free rate used as the hurdle.
+        risk_free_rate: Geometric annualized risk-free rate, over the same
+            dates as ``returns``, used as the numerator's hurdle. Defaults to
+            0.0 (no risk-free adjustment).
 
     Returns:
         Sortino ratio, or NaN if the series is empty, has no downside returns,
@@ -203,6 +279,7 @@ def summarize_strategy(
     returns: pd.Series,
     weight_history: pd.DataFrame,
     periods_per_year: int,
+    risk_free: pd.Series | None = None,
 ) -> dict[str, float]:
     """Compute a standard set of performance metrics for a strategy.
 
@@ -210,16 +287,31 @@ def summarize_strategy(
         returns: Portfolio period return series.
         weight_history: Rebalance-date weight history DataFrame.
         periods_per_year: Number of return periods per calendar year.
+        risk_free: Optional per-period risk-free-rate series (decimal, not
+            percent), such as ``load_fama_french(directory, "capm")["rf"]``.
+            When given, it is reindexed to ``returns.index`` and
+            geometrically annualized via :func:`annualized_risk_free` (0.0
+            when ``returns`` is empty), and that rate is charged as the
+            numerator's hurdle in both ``sharpe`` and ``sortino`` — their
+            denominators are unaffected; see :func:`sharpe_ratio` and
+            :func:`sortino_ratio`. When ``None`` (default), both ratios use a
+            zero risk-free rate and behavior is unchanged from before this
+            parameter existed.
 
     Returns:
         A dictionary with keys: ``annual_return``, ``annual_volatility``,
         ``sharpe``, ``sortino``, ``max_drawdown``, ``hhi``, ``avg_turnover``.
     """
+    rf_annual = (
+        annualized_risk_free(risk_free, returns.index, periods_per_year)
+        if risk_free is not None
+        else 0.0
+    )
     return {
         "annual_return": annualized_return(returns, periods_per_year),
         "annual_volatility": annualized_volatility(returns, periods_per_year),
-        "sharpe": sharpe_ratio(returns, periods_per_year),
-        "sortino": sortino_ratio(returns, periods_per_year),
+        "sharpe": sharpe_ratio(returns, periods_per_year, risk_free_rate=rf_annual),
+        "sortino": sortino_ratio(returns, periods_per_year, risk_free_rate=rf_annual),
         "max_drawdown": max_drawdown(returns),
         "hhi": concentration_hhi(weight_history),
         "avg_turnover": average_turnover(weight_history),

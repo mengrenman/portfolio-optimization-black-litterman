@@ -1,4 +1,4 @@
-.PHONY: setup test run-buffett run-pelosi run-trump lint notebook attribution
+.PHONY: setup test run-buffett run-pelosi run-trump lint notebook attribution tables
 
 setup:
 	python -m pip install -e '.[dev,notebooks]'
@@ -23,3 +23,6 @@ notebook:
 
 attribution:
 	python scripts/factor_attribution.py
+
+tables:
+	python scripts/performance_tables.py

@@ -7,9 +7,14 @@ import numpy as np
 import pandas as pd
 
 from portfolio_bl.backtest.engine import BacktestResult, rolling_backtest
-from portfolio_bl.backtest.metrics import infer_periods_per_year, summarize_strategy
+from portfolio_bl.backtest.metrics import (
+    annualized_risk_free,
+    infer_periods_per_year,
+    summarize_strategy,
+)
 from portfolio_bl.config import AppConfig
 from portfolio_bl.data.disclosures import latest_portfolio_for_aliases, load_disclosures_csv
+from portfolio_bl.data.factors import load_fama_french
 from portfolio_bl.data.prices import load_prices_csv, monthly_rebalance_dates, to_return_matrix
 from portfolio_bl.models.black_litterman import (
     black_litterman_posterior,
@@ -34,6 +39,10 @@ class CaseStudyResult:
         strategy_results: Mapping from strategy name to its
             :class:`~portfolio_bl.backtest.engine.BacktestResult`.
         summary: DataFrame of performance metrics (strategies × metrics).
+        risk_free_rate: The annualized risk-free rate charged in Sharpe and
+            Sortino (see :func:`~portfolio_bl.backtest.metrics.summarize_strategy`),
+            computed over the disclosed strategy's return dates. ``0.0`` when
+            ``app_config.factors_dir`` is not configured.
     """
 
     person_label: str
@@ -41,6 +50,7 @@ class CaseStudyResult:
     universe: list[str]
     strategy_results: dict[str, BacktestResult]
     summary: pd.DataFrame
+    risk_free_rate: float = 0.0
 
 
 def _constant_weight_fn(weights: pd.Series):
@@ -73,6 +83,15 @@ def run_case_study(
       as extra rows of the pick matrix. Set
       ``backtest.use_sample_mean_views`` to ``False`` to use only the
       explicit views.
+
+    When ``app_config.factors_dir`` is configured, each strategy's Sharpe and
+    Sortino ratios are net of the daily T-bill rate: the daily risk-free
+    series is loaded once via
+    :func:`~portfolio_bl.data.factors.load_fama_french` and charged as the
+    numerator's hurdle (see
+    :func:`~portfolio_bl.backtest.metrics.summarize_strategy`). When it is
+    not configured, both ratios use a zero risk-free rate, unchanged from
+    before this feature existed.
 
     The ``view_confidence`` argument controls how strongly views override the
     BL equilibrium prior. It applies to the sample-mean views and to any
@@ -266,18 +285,33 @@ def run_case_study(
         "black_litterman": rolling_backtest(returns, rebalance_dates, lookback, bl_fn),
     }
 
+    if app_config.factors_dir is not None:
+        logger.info("Loading daily risk-free series from %s.", app_config.factors_dir)
+        risk_free_series = load_fama_french(app_config.factors_dir, "capm")["rf"]
+    else:
+        risk_free_series = None
+
     summary = pd.DataFrame(
         {
             name: summarize_strategy(
                 result.returns,
                 result.weight_history,
                 periods_per_year=periods_per_year,
+                risk_free=risk_free_series,
             )
             for name, result in strategy_results.items()
         }
     ).T
 
     summary.index.name = "strategy"
+
+    risk_free_rate = (
+        annualized_risk_free(
+            risk_free_series, strategy_results["disclosed"].returns.index, periods_per_year
+        )
+        if risk_free_series is not None
+        else 0.0
+    )
 
     logger.info("Case study complete for %s.", case_cfg.person_label)
     return CaseStudyResult(
@@ -286,4 +320,5 @@ def run_case_study(
         universe=universe,
         strategy_results=strategy_results,
         summary=summary,
+        risk_free_rate=risk_free_rate,
     )

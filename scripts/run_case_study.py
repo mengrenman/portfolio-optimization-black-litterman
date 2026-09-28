@@ -135,6 +135,7 @@ def main() -> None:
             "as_of_date": result.as_of_date.strftime("%Y-%m-%d"),
             "n_assets": len(result.universe),
             "universe": ",".join(result.universe),
+            "risk_free_rate": result.risk_free_rate,
         }
     )
     metadata.to_csv(output_dir / "metadata.csv", header=["value"])

@@ -11,6 +11,7 @@ from portfolio_bl.backtest.attribution import (
 from portfolio_bl.backtest.engine import BacktestResult, rolling_backtest
 from portfolio_bl.backtest.metrics import (
     annualized_return,
+    annualized_risk_free,
     annualized_volatility,
     average_turnover,
     concentration_hhi,
@@ -26,6 +27,7 @@ __all__ = [
     "FactorRegression",
     "RegressionResult",
     "annualized_return",
+    "annualized_risk_free",
     "annualized_volatility",
     "attribution_table",
     "average_turnover",

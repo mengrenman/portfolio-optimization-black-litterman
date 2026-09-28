@@ -15,7 +15,8 @@ Can a Black-Litterman overlay improve portfolio quality relative to:
   - `disclosed` (static disclosed weights),
   - `mean_variance` (sample-estimated Markowitz),
   - `black_litterman` (equilibrium + views posterior; explicit pick-matrix views per case study).
-- Metrics: annual return/volatility, Sharpe, Sortino, max drawdown, HHI concentration, turnover.
+- Metrics: annual return/volatility, Sharpe and Sortino (net of the one-month T-bill rate when
+  factor data is configured), max drawdown, HHI concentration, turnover.
 - CLI pipeline with structured logging (`--verbose` flag) that writes per-case outputs to `reports/output/<person>/`.
 - Four notebooks with visual diagnostics, strategy comparison, sensitivity analysis, and benchmark attribution.
 - Configurable `view_confidence` parameter exposed via YAML and `BacktestConfig`.
@@ -58,6 +59,7 @@ portfolio-optimization-black-litterman/
     output/                  # Generated case-study artifacts
   scripts/
     make_figures.py          # Regenerates docs/figures/
+    performance_tables.py    # Regenerates the README's Sharpe-bearing tables
     run_case_study.py        # CLI entrypoint
     factor_attribution.py    # Cross-case Fama-French factor-attribution report
     fetch_fama_french.py     # Refreshes data/raw/factors/ from Ken French's data library
@@ -66,7 +68,7 @@ portfolio-optimization-black-litterman/
     data/                    # Disclosure, price and factor loaders
     models/                  # BL posterior, pick-matrix views, mean-variance logic
     pipeline.py              # End-to-end experiment runner
-  tests/                     # Unit + integration tests (190 tests)
+  tests/                     # Unit + integration tests (199 tests)
 ```
 
 ## Input Data Schemas
@@ -155,8 +157,10 @@ python scripts/factor_attribution.py   # or: make attribution
 ## Selected Results
 
 Every figure below comes from the bundled dataset and the shipped configuration (6-period
-lookback, month-end rebalancing, `view_confidence: 0.65`). Regenerate the tables with
-`python scripts/run_case_study.py --person <key>` and the plots with
+lookback, month-end rebalancing, `view_confidence: 0.65`). Every Sharpe ratio is net of the
+one-month T-bill rate, which compounds to 2.6% a year over the backtest. Regenerate the tables
+that quote a Sharpe ratio with `python scripts/performance_tables.py` (or `make tables`), the
+per-case outputs with `python scripts/run_case_study.py --person <key>`, and the plots with
 `python scripts/make_figures.py`.
 
 ### Dataset at a glance
@@ -191,16 +195,16 @@ title is scale-free and comparable across all three.
 
 | Person | Strategy | Annual return | Annual vol | Sharpe | Max drawdown | Turnover |
 |---|---|---:|---:|---:|---:|---:|
-| Buffett | disclosed | 17.5% | 23.5% | 0.75 | -43.4% | 0.0% |
-| Buffett | mean-variance | 10.6% | 21.4% | 0.49 | -34.9% | 36.2% |
-| Buffett | Black-Litterman | 14.2% | 21.2% | 0.67 | -32.7% | 30.1% |
-| Pelosi | disclosed | 27.9% | 27.6% | 1.01 | -38.9% | 0.0% |
-| Pelosi | mean-variance | 22.6% | 25.1% | 0.90 | -36.7% | 32.1% |
-| Pelosi | Black-Litterman | 23.2% | 25.1% | 0.93 | -37.3% | 29.2% |
-| Trump | disclosed | 7.5% | 147.2% | 0.05 | -84.6% | 0.0% |
-| Trump | mean-variance | 8.4% | 10.5% | 0.80 | -17.2% | 28.0% |
-| Trump | Black-Litterman | 6.0% | 11.5% | 0.52 | -23.1% | 26.6% |
-| *benchmark* | *SPY, same window* | *14.6%* | *19.7%* | *0.74* | *-33.7%* | *n/a* |
+| Buffett | disclosed | 17.5% | 23.5% | 0.64 | -43.4% | 0.0% |
+| Buffett | mean-variance | 10.6% | 21.4% | 0.37 | -34.9% | 36.2% |
+| Buffett | Black-Litterman | 14.2% | 21.2% | 0.55 | -32.7% | 30.1% |
+| Pelosi | disclosed | 27.9% | 27.6% | 0.92 | -38.9% | 0.0% |
+| Pelosi | mean-variance | 22.6% | 25.1% | 0.80 | -36.7% | 32.1% |
+| Pelosi | Black-Litterman | 23.2% | 25.1% | 0.82 | -37.3% | 29.2% |
+| Trump | disclosed | 7.5% | 147.2% | 0.03 | -84.6% | 0.0% |
+| Trump | mean-variance | 8.4% | 10.5% | 0.55 | -17.2% | 28.0% |
+| Trump | Black-Litterman | 6.0% | 11.5% | 0.30 | -23.1% | 26.6% |
+| *benchmark* | *SPY, same window* | *14.6%* | *19.7%* | *0.61* | *-33.7%* | *n/a* |
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/figures/equity-curves-dark.png">
@@ -221,9 +225,11 @@ title is scale-free and comparable across all three.
   snapshot and did not trade until late 2021, so the curve sits flat near 1.0 and then
   inherits the ticker's swings almost directly. Both optimizers re-estimate weights from the
   lookback window and never take on that concentration, which is why mean-variance turns a
-  0.05 Sharpe into 0.80.
-- **Black-Litterman lands between its two inputs in every case**, which is what the model is
-  built to do rather than a disappointment.
+  0.03 Sharpe into 0.55.
+- **Black-Litterman's Sharpe ratio lands between its two inputs' in every case**, which is what
+  the model is built to do rather than a disappointment. It does not on every column: Trump's
+  overlay compounds at 6.0% against 7.5% and 8.4%, and Buffett's has the lowest volatility and
+  the shallowest drawdown of the three.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/figures/drawdowns-dark.png">
@@ -447,13 +453,13 @@ vectors across rebalances (Buffett, real data).
 
 | Confidence | Distance to disclosed | Distance to mean-variance | Sharpe | Turnover |
 |---:|---:|---:|---:|---:|
-| 0.01 | 0.063 | 0.390 | 0.75 | 5.9% |
-| 0.20 | 0.351 | 0.243 | 0.72 | 24.9% |
-| 0.40 | 0.400 | 0.209 | 0.71 | 27.7% |
-| 0.65 | 0.420 | 0.165 | 0.67 | 30.1% |
-| 0.80 | 0.423 | 0.126 | 0.62 | 31.7% |
-| 0.95 | 0.425 | 0.054 | 0.54 | 34.5% |
-| 0.999 | 0.429 | 0.002 | 0.49 | 36.2% |
+| 0.01 | 0.063 | 0.390 | 0.64 | 5.9% |
+| 0.20 | 0.351 | 0.243 | 0.60 | 24.9% |
+| 0.40 | 0.400 | 0.209 | 0.59 | 27.7% |
+| 0.65 | 0.420 | 0.165 | 0.55 | 30.1% |
+| 0.80 | 0.423 | 0.126 | 0.50 | 31.7% |
+| 0.95 | 0.425 | 0.054 | 0.42 | 34.5% |
+| 0.999 | 0.429 | 0.002 | 0.37 | 36.2% |
 
 Three things worth noting. Sharpe falls monotonically as confidence rises, so on this data
 trusting the trailing sample means more is actively harmful, and turnover rises with it.
@@ -464,7 +470,7 @@ other two rather than an independent third model.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/figures/confidence-sweep-dark.png">
-  <img alt="Left: distance from the Black-Litterman weights to the disclosed portfolio rises and distance to the mean-variance portfolio falls as view confidence increases, the two crossing between 0.05 and 0.2. Right: Sharpe ratio falls steadily from 0.73 to 0.50 across the same range." src="docs/figures/confidence-sweep.png">
+  <img alt="Left: distance from the Black-Litterman weights to the disclosed portfolio rises and distance to the mean-variance portfolio falls as view confidence increases, the two crossing between 0.05 and 0.2. Right: Sharpe ratio, net of the T-bill rate, falls steadily from 0.61 to 0.38 across the same range." src="docs/figures/confidence-sweep.png">
 </picture>
 
 
@@ -483,8 +489,8 @@ other two rather than an independent third model.
 > correlation of 0.99. The sweep above stacks one view per asset, where per-asset
 > calibration does not hold and `c` acts as a dial on the set of views rather than a per-asset
 > guarantee; see [Methodology](#methodology). The figures above are post-fix; the correction
-> moved the Trump mean-variance Sharpe from 0.85 to 0.80, that case study having the
-> worst-conditioned covariance.
+> moved the Trump mean-variance Sharpe from 0.85 to 0.80 (both then computed at a zero
+> risk-free rate), that case study having the worst-conditioned covariance.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/figures/confidence-calibration-dark.png">
@@ -767,9 +773,9 @@ difference is material where one position dominates:
 
 | Person | `disclosed` as run (daily constant mix) | Same weights, bought and held |
 |---|---:|---:|
-| Buffett | 17.5% return, 0.75 Sharpe | 17.3%, 0.74 |
-| Pelosi | 27.9%, 1.01 | 31.1%, 1.04 |
-| Trump | 7.5%, 0.05 | 3.7%, 0.02 |
+| Buffett | 17.5% return, 0.64 Sharpe | 17.3%, 0.63 |
+| Pelosi | 27.9%, 0.92 | 31.1%, 0.96 |
+| Trump | 7.5%, 0.03 | 3.7%, 0.01 |
 
 Trump is the instructive case: re-setting daily keeps buying back into DJT as it falls,
 which flatters the return by 3.8 points a year against simply holding.
@@ -797,7 +803,19 @@ DJT until the 2022-04-29 rebalance, the first with a complete lookback window.
 - `periods_per_year` is inferred from the median gap between dates, resolving to 252 here.
 - Annualized return is **geometric**; annualized volatility is the sample standard deviation
   scaled by the square root of `periods_per_year`.
-- Sharpe and Sortino both assume a **zero risk-free rate**.
+- Sharpe and Sortino are **net of the risk-free rate**: the numerator is the geometric
+  annualized return minus the geometric annualized one-month T-bill return over the same days,
+  taken from the bundled Fama-French data when `data.factors_dir` is configured and zero
+  otherwise. This is not the textbook Sharpe ratio, which divides the arithmetic mean daily
+  excess return by its own standard deviation. That version is 0.02 to 0.08 higher for every
+  strategy and SPY except Trump's disclosed book, where it is 0.41 against 0.03 because an
+  arithmetic mean carries no volatility drag at 147% volatility; almost all of that book's
+  arithmetic return comes from two days (see [Factor attribution](#factor-attribution)).
+  The denominators are unchanged: the volatility of raw returns, and for Sortino the spread of
+  returns below zero, not below the T-bill rate. Sortino's hurdle and its downside threshold are
+  therefore different targets where the textbook ratio uses one; moving the threshold to the
+  T-bill rate adds 2 to 25 days to each strategy's downside set and changes no Sortino ratio here
+  by more than 0.01.
 - Sortino returns NaN rather than infinity when a series has no negative returns, which keeps
   CSV output well defined.
 - HHI is the sum of squared weights, averaged over rebalances. `1/n` is equal weight, `1.0`
@@ -823,10 +841,10 @@ rebalance gives:
 
 | Case | Strategy | 0 bp | 10 bp | 25 bp | 50 bp |
 |---|---|---:|---:|---:|---:|
-| Buffett | mean-variance | 0.49 | 0.47 | 0.44 | 0.38 |
-| Buffett | Black-Litterman | 0.67 | 0.65 | 0.62 | 0.57 |
-| Pelosi | Black-Litterman | 0.93 | 0.91 | 0.88 | 0.84 |
-| Trump | mean-variance | 0.80 | 0.76 | 0.71 | 0.62 |
+| Buffett | mean-variance | 0.37 | 0.35 | 0.32 | 0.26 |
+| Buffett | Black-Litterman | 0.55 | 0.53 | 0.50 | 0.45 |
+| Pelosi | Black-Litterman | 0.82 | 0.81 | 0.78 | 0.74 |
+| Trump | mean-variance | 0.55 | 0.52 | 0.46 | 0.38 |
 
 Costs move every comparison in the static book's favor, because the overlays turn over 26
 to 37 percent a month while the disclosed book reports zero. They do not overturn the
@@ -865,9 +883,20 @@ SPAC's price path to it. That path includes the merger-announcement spike of 202
 disclosed-book alphas and both Trump overlay-minus-disclosed rows under
 [Factor attribution](#factor-attribution). Neither overlay could hold DJT until 2022.
 
-**Sharpe and Sortino assume a zero risk-free rate.** Over a window containing the 2022-2023
-tightening cycle, that flatters every strategy's ratio in absolute terms, though it does not
-change rankings within a case study.
+**Sharpe and Sortino are net of the T-bill rate, which is not small here.** The one-month
+T-bill compounds to 2.6% a year over the backtest, so every Sharpe ratio is lower than it would
+be at a zero rate by 2.6% divided by the strategy's volatility: 0.02 for the 147%-volatility
+Trump book, 0.25 and 0.23 for the Trump mean-variance and Black-Litterman overlays (10.5% and
+11.5% volatility), and 0.09 to 0.13 for every other strategy and SPY. With the geometric
+numerator used here, the ordering within each case study is the same at either rate, in the
+headline table and at every cost level in the table above. Two things do change. Trump's
+mean-variance overlay falls from ahead of SPY (0.80 against 0.74) to behind it (0.55 against
+0.61). And the invariance depends on the convention: with the textbook Sharpe ratio, charging
+the T-bill moves Trump's Black-Litterman overlay from ahead of the disclosed book (0.56 against
+0.43) to behind it (0.34 against 0.41), because that book's two SPAC days inflate its arithmetic
+mean. The zero-rate figures are available with `python scripts/performance_tables.py --zero-rf`.
+Removing `data.factors_dir` from the config also gives them, but it switches off factor
+attribution too.
 
 **Statistical significance is computed only for the factor attribution, plus one quoted
 t-statistic.** The regressions under [Factor attribution](#factor-attribution) carry Newey-West
@@ -916,9 +945,16 @@ result = run_case_study(cfg, person_key="buffett", view_confidence=0.80)
 
 The optional `data.factors_dir` key points to the directory of bundled Fama-French factor CSVs
 (`data/raw/factors` in the shipped config). When it is set, `run_case_study.py` also writes a
-per-case `factor_attribution.csv` and `scripts/factor_attribution.py` can run; when it is
-absent, `run_case_study.py` skips factor attribution silently and the standalone script raises
-an error.
+per-case `factor_attribution.csv`, `scripts/factor_attribution.py` can run, and Sharpe and
+Sortino are charged the T-bill rate from the same files. When it is absent, `run_case_study.py`
+skips factor attribution silently, Sharpe and Sortino fall back to a zero risk-free rate, and the
+standalone attribution script raises an error. If the price data runs past the factor files'
+last month, which is normal after a refresh because French publishes with a lag, the missing
+days take the nearest available rate (and any days before the files begin take the first one).
+`run_case_study.py` and `performance_tables.py` log a warning with the count; `make_figures.py`
+switches logging off, so run one of the other two first after a refresh. Nothing caps the gap:
+a couple of missing months moves the annualized rate by well under 0.01 point, but three
+missing years would move it by about 0.3 points.
 
 ## Expressing Views with a Pick Matrix
 
@@ -1023,7 +1059,7 @@ shipped `configs/case_studies.yaml`). Shapes below are for the Buffett case stud
 | `equity_curve.csv` | 1,864 x 4 | date | Cumulative NAV per strategy, starting at 1.0 |
 | `strategy_returns.csv` | 1,864 x 4 | date | Daily portfolio return per strategy |
 | `weights_<strategy>.csv` | 90 x 15 | `rebalance_date` | Weights per ticker at each rebalance |
-| `metadata.csv` | 4 x 2 | key | Person label, snapshot date, asset count, universe |
+| `metadata.csv` | 5 x 2 | key | Person label, snapshot date, asset count, universe, annualized risk-free rate |
 | `factor_attribution.csv` | 9 x 18 | (`strategy`, `model`) | Alpha, loadings, t-statistics, R² for each strategy under CAPM/FF3/FF5 |
 
 All values are raw decimals, not percentages: `0.17535...` in `summary.csv` is 17.5%, and
@@ -1043,9 +1079,10 @@ these outputs and the report template are **not** tracked by git, while `data/` 
 ## Development
 
 ```bash
-pytest -q                       # 190 tests, about 2 seconds
+pytest -q                       # 199 tests, about 2 seconds
 ruff check src tests scripts    # linting
 python scripts/make_figures.py  # regenerate docs/figures/ (needs matplotlib)
+python scripts/performance_tables.py  # regenerate the Sharpe-bearing README tables
 ```
 
 `make_figures.py` writes a light and a dark variant of every plot, which the README pairs
@@ -1065,16 +1102,15 @@ broken by refreshing the price data.
 | `tests/test_data_loaders.py` | 15 | Disclosure and price loading, cleaning, return matrix |
 | `tests/test_factor_wiring.py` | 3 | `data.factors_dir` config parsing, and config to loader to pipeline to attribution table on synthetic data (the two scripts themselves are not exercised) |
 | `tests/test_factors_data.py` | 22 | Fama-French CSV loading, validation, and the derived risk-free rate |
-| `tests/test_metrics.py` | 20 | Frequency inference and every performance metric |
-| `tests/test_pipeline_smoke.py` | 9 | End-to-end runs and config error paths |
+| `tests/test_metrics.py` | 27 | Frequency inference, every performance metric, and the annualized risk-free rate |
+| `tests/test_pipeline_smoke.py` | 11 | End-to-end runs, config error paths, and the risk-free rate with and without factor data |
 | `tests/test_views.py` | 74 | Views, pick-matrix construction, config parsing, ridge calibration |
 
-`ruff` currently reports 13 findings, all pre-existing and cosmetic: six import-ordering issues,
-three unused imports in the older test modules, an unsorted `__all__` list, a deprecated import
-path, a non-executable shebang, and one exception-type preference that is deliberate. Eleven are
+`ruff` currently reports 11 findings, all pre-existing and cosmetic: six import-ordering issues,
+one unused import in an older test module, an unsorted `__all__` list, a deprecated import path,
+a non-executable shebang, and one exception-type preference that is deliberate. Nine are
 auto-fixable with `--fix`. None touch model logic.
 
 ## Current Status and Next Steps
 - Add transaction-cost and slippage assumptions to the backtest engine.
 - Add automated figure export from notebooks to `reports/output/figures/`.
-- Charge the risk-free rate in the Sharpe and Sortino calculations instead of assuming zero.
