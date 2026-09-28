@@ -1,4 +1,4 @@
-.PHONY: setup test run-buffett run-pelosi run-trump lint notebook
+.PHONY: setup test run-buffett run-pelosi run-trump lint notebook attribution
 
 setup:
 	python -m pip install -e '.[dev,notebooks]'
@@ -20,3 +20,6 @@ run-trump:
 
 notebook:
 	jupyter notebook
+
+attribution:
+	python scripts/factor_attribution.py

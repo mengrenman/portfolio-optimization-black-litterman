@@ -7,8 +7,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from portfolio_bl.config import load_config
-from portfolio_bl.pipeline import run_case_study
+from portfolio_bl.backtest.attribution import attribution_table
+from portfolio_bl.backtest.metrics import infer_periods_per_year
+from portfolio_bl.config import AppConfig, load_config
+from portfolio_bl.data.factors import load_fama_french
+from portfolio_bl.pipeline import CaseStudyResult, run_case_study
+
+logger = logging.getLogger(__name__)
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -35,6 +40,41 @@ def _format_summary(summary: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _write_factor_attribution(
+    app_config: AppConfig, result: CaseStudyResult, output_dir: Path
+) -> None:
+    """Write a factor-attribution table for one case study's three strategies.
+
+    Regresses each strategy's daily returns on the market factor alone
+    (CAPM) and on the FF3 and FF5 Fama-French factor frames (loaded from
+    ``app_config.factors_dir`` with
+    the default ``derive_daily_rf=True``) and writes the combined table to
+    ``<output_dir>/factor_attribution.csv``. Skipped silently (with a debug
+    log line) when ``app_config.factors_dir`` is not configured.
+
+    Args:
+        app_config: Application configuration; only used when
+            ``factors_dir`` is set.
+        result: The case study's outputs, supplying the three strategies'
+            daily return series.
+        output_dir: Directory to write ``factor_attribution.csv`` into.
+    """
+    if app_config.factors_dir is None:
+        logger.debug("No data.factors_dir configured; skipping factor attribution.")
+        return
+
+    returns_by_name = {name: strategy.returns for name, strategy in result.strategy_results.items()}
+    periods_per_year = infer_periods_per_year(next(iter(returns_by_name.values())).index)
+    factor_sets = {
+        model: load_fama_french(app_config.factors_dir, model=model, derive_daily_rf=True)
+        for model in ("capm", "ff3", "ff5")
+    }
+
+    table = attribution_table(returns_by_name, factor_sets, periods_per_year=periods_per_year)
+    table.to_csv(output_dir / "factor_attribution.csv")
+    logger.info("Saved factor attribution to: %s", output_dir / "factor_attribution.csv")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run a Black-Litterman public portfolio case study.")
     parser.add_argument("--person", required=True, help="Case-study key from configs/case_studies.yaml")
@@ -56,7 +96,6 @@ def main() -> None:
     args = parser.parse_args()
 
     _setup_logging(args.verbose)
-    logger = logging.getLogger(__name__)
 
     root = Path(__file__).resolve().parents[1]
     config_path = (root / args.config).resolve()
@@ -99,6 +138,8 @@ def main() -> None:
         }
     )
     metadata.to_csv(output_dir / "metadata.csv", header=["value"])
+
+    _write_factor_attribution(app_config, result, output_dir)
 
     logger.info("Saved outputs to: %s", output_dir)
     print(f"\nSaved outputs to: {output_dir}")

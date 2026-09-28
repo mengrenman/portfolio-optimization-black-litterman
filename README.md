@@ -20,6 +20,8 @@ Can a Black-Litterman overlay improve portfolio quality relative to:
 - Four notebooks with visual diagnostics, strategy comparison, sensitivity analysis, and benchmark attribution.
 - Configurable `view_confidence` parameter exposed via YAML and `BacktestConfig`.
 - Explicit absolute and relative views with per-view confidence, defined in YAML per case study.
+- Fama-French factor-model performance attribution (CAPM, FF3, FF5) with Newey-West (HAC)
+  standard errors, run per case study or across all three at once.
 
 ## Important Caveats
 - Public disclosures are delayed, incomplete, and sometimes approximate.
@@ -49,6 +51,7 @@ portfolio-optimization-black-litterman/
     raw/
       disclosures/           # Input holdings disclosures CSV
       prices/                # Input price history CSV
+      factors/                # Bundled Fama-French factor CSVs (see its own README)
   notebooks/                 # Visual walkthrough notebooks
   reports/
     templates/               # Markdown report templates
@@ -56,12 +59,14 @@ portfolio-optimization-black-litterman/
   scripts/
     make_figures.py          # Regenerates docs/figures/
     run_case_study.py        # CLI entrypoint
+    factor_attribution.py    # Cross-case Fama-French factor-attribution report
+    fetch_fama_french.py     # Refreshes data/raw/factors/ from Ken French's data library
   src/portfolio_bl/
-    backtest/                # Rolling backtest and metrics
-    data/                    # Disclosure + price loaders
+    backtest/                # Rolling backtest, metrics, factor attribution
+    data/                    # Disclosure, price and factor loaders
     models/                  # BL posterior, pick-matrix views, mean-variance logic
     pipeline.py              # End-to-end experiment runner
-  tests/                     # Unit + integration tests (137 tests)
+  tests/                     # Unit + integration tests (190 tests)
 ```
 
 ## Input Data Schemas
@@ -80,6 +85,16 @@ Required columns:
 - `date` (YYYY-MM-DD)
 - `ticker`
 - `close`
+
+### Factors CSV
+Bundled under `data/raw/factors/` (`ff3_daily.csv`, `ff5_daily.csv`, `ff3_monthly.csv`); see
+`data/raw/factors/README.md` for the full schema, source, and vintage. Required columns:
+- `date` (`YYYY-MM-DD` daily, `YYYY-MM` monthly)
+- `Mkt-RF`, `SMB`, `HML` (3-factor), plus `RMW`, `CMA` (5-factor)
+- `RF`
+
+Every value is published as a percent (`0.85` means `0.85%`); `load_factor_csv` is the only
+place that converts it to decimal.
 
 ## Environment and Setup
 
@@ -126,8 +141,16 @@ Generated outputs include:
 - `strategy_returns.csv`
 - `weights_<strategy>.csv`
 - `metadata.csv`
+- `factor_attribution.csv` (skipped if `data.factors_dir` is not configured; it is, in the
+  shipped `configs/case_studies.yaml`)
 
 All written under `reports/output/<person>/`.
+
+Run the same factor regressions across all three case studies at once, and print the tables
+under [Factor attribution](#factor-attribution) below, with:
+```bash
+python scripts/factor_attribution.py   # or: make attribution
+```
 
 ## Selected Results
 
@@ -219,7 +242,7 @@ how that changed.
   <img alt="Rolling 252-day beta against SPY for each strategy across the three case studies. Buffett's disclosed line starts near 1.0, peaks at 1.32 in early 2021 and ends at 0.89, with both overlays mostly below it and ending at 0.78. Pelosi's disclosed line stays above 1.2 for most of the period while the overlays track lower and end below 1. The Trump disclosed line sits near 0.08 until late 2021, then climbs past 1.6, while both overlays stay below 0.7 throughout." src="docs/figures/rolling-beta.png">
 </picture>
 
-Two betas are worth distinguishing. The median of the rolling series summarises the figure. The
+Two betas are worth distinguishing. The median of the rolling series summarizes the figure. The
 full-sample beta is measured over the same days as the return figures above, so it is the one to
 use when attributing those returns.
 
@@ -240,25 +263,181 @@ use when attributing those returns.
 - **Beta explains part of Pelosi's headline number, but not most of it.** That book returned
   27.9% a year against the market's 14.6%, a gap of 13.2 points. Its full-sample beta is 1.26,
   so market exposure accounts for `1.26 x 14.6% - 14.6%`, about 3.8 points. The remaining 9.5
-  points is residual: Jensen's alpha of 8.8% a year, with a t-statistic near 2. Beta is roughly
-  a quarter of the story. The rest is what the hindsight caveat above is about, not skill
-  established by this backtest.
+  points is residual. The CAPM row under [Factor attribution](#factor-attribution) makes the same
+  split on its own basis: arithmetic means, the CRSP market, and returns in excess of T-bills.
+  There the book beat the market by 13.0 points a year, a beta of 1.22 accounts for 2.8 of them,
+  and alpha is 10.2%. That alpha is larger than the 9.5-point residual because the basis changed:
+  against SPY with no risk-free rate it is 8.8% (t-statistic near 2 with ordinary standard
+  errors), 9.4% once the T-bill rate is subtracted, and 10.2% against the CRSP market. Beta
+  explains 22% to 28% of the gap either way. The rest is what the hindsight caveat above is about,
+  not skill established by this backtest.
 - **The overlays are steadier**, though the headline contrast overstates it. Across the whole
   series Trump's disclosed beta spans 1.57 while Black-Litterman spans 0.60, but both numbers
   are inflated by the pre-2022 plateau described below. Restricting to windows that exclude it,
   the disclosed range is still 1.11 against 0.35 for Black-Litterman.
 
-Three caveats specific to this figure. The Trump disclosed line sits near 0.08 until DJT begins
-trading in September 2021, which is not low market exposure but the zero-fill described under
+Three caveats specific to this figure. The Trump disclosed line sits near 0.08 until the price
+series under DJT begins in September 2021 (as a SPAC; see
+[Assumptions and Limitations](#assumptions-and-limitations)), which is not low market exposure
+but the zero-fill described under
 [Backtest Semantics](#backtest-semantics): 91% of that book is a ticker with no returns yet.
 That plateau also drags the Trump row of the table, whose median is 1.08 rather than 0.81 once
 those windows are dropped. And SPY is itself 1.36% of the Trump disclosed portfolio, so that one
 line is very mildly regressed against itself; Buffett and Pelosi hold no SPY.
 
-This figure stops short of a full factor attribution. Notebook 4 computes one, but its sector
-factors fall back to proxies built from the portfolios' own holdings when an ETF is missing from
-the price file, so its alpha is not comparable across the three cases. A single genuine
-benchmark avoids that, at the cost of attributing only market exposure.
+This figure stops short of a full factor attribution; see
+[Factor attribution](#factor-attribution) below for one with proper style factors and
+Newey-West standard errors. Notebook 4 also computes a decomposition, but its sector factors
+fall back to proxies built from the portfolios' own holdings when an ETF is missing from the
+price file, so its alpha there is not comparable across the three cases.
+
+### Factor attribution
+
+Beta captures market exposure; it says nothing about exposure to size, value, profitability or
+investment style, and it carries no standard error. `scripts/factor_attribution.py` regresses
+each strategy's daily excess return (return minus the derived daily risk-free rate) on CAPM
+(market only), FF3 (`Mkt-RF`, `SMB`, `HML`) and FF5 (adds `RMW`, `CMA`) factors from Kenneth
+French's data library, with an intercept and Newey-West (HAC) standard errors. The sample is the
+full backtest window: 1,864 daily returns, 2018-08-01 to 2025-12-30, identical dates across all
+nine strategy series and SPY. Alpha is the intercept annualized arithmetically (`x 252`).
+
+| Person | Strategy | CAPM alpha | t | FF3 alpha | t | FF5 alpha | t |
+|---|---|---|---|---|---|---|---|
+| Warren Buffett | Disclosed | 3.2% | 0.9 | 2.5% | 1.0 | 2.6% | 1.0 |
+| Warren Buffett | Mean-variance | -1.9% | -0.5 | -3.5% | -1.0 | -3.6% | -1.0 |
+| Warren Buffett | Black-Litterman | 1.8% | 0.4 | 0.0% | 0.0 | -0.1% | 0.0 |
+| Nancy Pelosi | Disclosed | 10.2% | 2.2 | 9.2% | 2.7 | 8.8% | 2.7 |
+| Nancy Pelosi | Mean-variance | 7.0% | 1.6 | 6.4% | 1.6 | 6.9% | 1.8 |
+| Nancy Pelosi | Black-Litterman | 7.9% | 1.7 | 7.3% | 1.7 | 7.8% | 1.8 |
+| Donald Trump | Disclosed | 53.0% | 0.9 | 55.9% | 0.9 | 56.4% | 1.0 |
+| Donald Trump | Mean-variance | 0.7% | 0.3 | 0.7% | 0.4 | 0.8% | 0.4 |
+| Donald Trump | Black-Litterman | -0.5% | -0.1 | -0.6% | -0.2 | -0.2% | -0.1 |
+| SPY (check) | | 0.7% | 1.1 | 0.0% | 0.1 | -0.2% | -0.5 |
+
+FF5 loadings, with R² (FF3 loadings, and every t-statistic behind these three tables, are in
+`reports/output/factor_attribution.csv`, or re-run `python scripts/factor_attribution.py`):
+
+| Person | Strategy | Alpha (ann.) | t | Mkt | SMB | HML | RMW | CMA | R² |
+|---|---|---|---|---|---|---|---|---|---|
+| Warren Buffett | Disclosed | 2.6% | 1.0 | 1.08 | -0.11 | 0.51 | 0.00 | -0.01 | 0.90 |
+| Warren Buffett | Mean-variance | -3.6% | -1.0 | 0.98 | -0.25 | 0.19 | 0.03 | 0.16 | 0.79 |
+| Warren Buffett | Black-Litterman | -0.1% | 0.0 | 0.94 | -0.30 | 0.15 | 0.00 | 0.23 | 0.74 |
+| Nancy Pelosi | Disclosed | 8.8% | 2.7 | 1.19 | -0.17 | -0.40 | 0.13 | -0.23 | 0.91 |
+| Nancy Pelosi | Mean-variance | 6.9% | 1.8 | 1.06 | -0.14 | -0.12 | -0.11 | -0.23 | 0.82 |
+| Nancy Pelosi | Black-Litterman | 7.8% | 1.8 | 1.03 | -0.17 | -0.14 | -0.13 | -0.24 | 0.79 |
+| Donald Trump | Disclosed | 56.4% | 1.0 | 0.55 | 0.41 | -0.33 | -0.29 | 0.35 | 0.01 |
+| Donald Trump | Mean-variance | 0.8% | 0.4 | 0.44 | 0.00 | 0.17 | -0.06 | 0.11 | 0.75 |
+| Donald Trump | Black-Litterman | -0.2% | -0.1 | 0.36 | -0.07 | 0.08 | -0.19 | 0.17 | 0.41 |
+| SPY (check) | | -0.2% | -0.5 | 0.98 | -0.09 | 0.01 | 0.06 | 0.05 | 1.00 |
+
+n_obs=1,864, Newey-West lags=7 (`floor(4 x (1864/100)^(2/9))`), 2018-08-01 to 2025-12-30.
+
+The last table regresses return *differences* on the same factors: each overlay minus the
+disclosed book, and Black-Litterman minus mean-variance. A return difference is already a
+zero-cost long-short excess return, so the risk-free rate is not subtracted again. Because all
+nine series share the same 1,864 dates, its alpha equals the difference of the two alphas above
+exactly; the regression adds the standard error.
+
+| Person | Strategy | CAPM alpha | t | FF3 alpha | t | FF5 alpha | t |
+|---|---|---|---|---|---|---|---|
+| Warren Buffett | Mean-variance minus disclosed | -5.1% | -1.4 | -6.0% | -1.8 | -6.3% | -1.9 |
+| Warren Buffett | Black-Litterman minus disclosed | -1.4% | -0.3 | -2.5% | -0.6 | -2.8% | -0.7 |
+| Warren Buffett | Black-Litterman minus mean-variance | 3.7% | 2.3 | 3.5% | 2.2 | 3.5% | 2.2 |
+| Nancy Pelosi | Mean-variance minus disclosed | -3.2% | -0.7 | -2.7% | -0.6 | -1.9% | -0.5 |
+| Nancy Pelosi | Black-Litterman minus disclosed | -2.3% | -0.5 | -1.9% | -0.4 | -1.0% | -0.2 |
+| Nancy Pelosi | Black-Litterman minus mean-variance | 0.9% | 0.7 | 0.9% | 0.7 | 0.9% | 0.7 |
+| Donald Trump | Mean-variance minus disclosed | -52.4% | -0.9 | -55.2% | -0.9 | -55.5% | -0.9 |
+| Donald Trump | Black-Litterman minus disclosed | -53.5% | -0.9 | -56.5% | -1.0 | -56.6% | -1.0 |
+| Donald Trump | Black-Litterman minus mean-variance | -1.2% | -0.4 | -1.3% | -0.5 | -1.0% | -0.4 |
+
+The two Trump rows against the disclosed book are driven by two trading days; see the Trump
+bullet below.
+
+### Reading the tables
+
+- **The SPY validation row behaves as it should.** Market loading is 0.98 with R² of 0.99 (FF3)
+  and 1.00 (FF5), and alpha is 0.0% under FF3 and -0.2% under FF5. Its CAPM alpha of 0.7% is a
+  size effect, not a defect. Over this window small caps lagged the market by 5.6% a year after
+  adjusting for beta (SMB's own CAPM alpha), and SPY's SMB loading of -0.12 turns that into about
+  0.65 points that CAPM has no factor to absorb. Once SMB enters under FF3 the alpha disappears.
+- **Pelosi's disclosed book keeps a positive alpha as style factors are added, and its
+  t-statistic rises while the alpha falls** (10.2% at t 2.2 under CAPM, to 8.8% at t 2.7 under
+  FF5), because the style factors absorb residual variance (R² climbs from 0.82 to 0.91) rather
+  than because the alpha grows. The book carries a growth tilt (HML -0.40 under FF5, -0.47 under
+  FF3), CMA -0.23 (loads on aggressively investing firms), and RMW +0.13. Do not read the
+  t-statistic as evidence of skill. The book is a 2024-12-31 snapshot held back to 2018: its
+  names are the ones still held after the run-up, and its weights are end-of-period values, so
+  the names that rose most carry the most weight from the start. A book built that way is biased
+  toward a positive alpha whether or not any skill is involved (an equal-weight book of the same
+  names already has a lower FF5 alpha, 6.0% at t 2.1); a factor regression controls for style,
+  not for how the names or weights were chosen. Two further checks are consistent with that,
+  though neither can separate hindsight from skill. The alpha sits in the biggest winners, as it
+  would under either reading: NVDA contributes 3.7 of the 8.8 points and AAPL 2.2, and dropping
+  NVDA alone leaves 5.7% (t 1.7). And 2025, the only year in the window after the snapshot date,
+  shows an FF5 alpha of 0.9% (t 0.1) against 10.2% (t 2.9) before it, but the 9.3-point gap has
+  a standard error of about 8.4 points, so one year cannot tell the two apart. A multiple-testing correction does not settle it
+  either way: 2.7 clears the Bonferroni bar of 2.64 for six tests (treating each person's nearly
+  identical mean-variance and Black-Litterman rows as one), misses 2.77 for all nine rows, and
+  misses 3.11 once all three models count.
+- **Buffett's disclosed book carries a strong value tilt (the overlays a mild one), but size,
+  not value, is what moves their alpha.** The disclosed book's HML loading is +0.49 (FF3) /
+  +0.51 (FF5), against 0.15 to 0.19 for the overlays. Over this window,
+  though, HML earned nothing beyond its own market exposure (a CAPM alpha of -0.06% a year), so
+  the tilt moves alpha by less than 0.1 point. What CAPM misreads is size: the book and both
+  overlays lean large-cap (SMB -0.14 to -0.33 under FF3), and small caps lagged by 5.6% a year
+  after adjusting for beta, so CAPM counts that tilt as alpha. It accounts for the whole change
+  from CAPM to FF3, including 3.2% to 2.5% for the disclosed book and 1.8% to 0.0% for
+  Black-Litterman. Neither of those CAPM figures was distinguishable from zero to begin with (t
+  0.9 and 0.4), and none of Buffett's nine strategy-level alpha estimates clears even the
+  single-test threshold of 1.96.
+- **Trump's disclosed-book alpha is two trading days, not a finding.** The 53-56% a year is an
+  arithmetic mean, and two days supply almost all of it. On 2021-10-21 and 2021-10-22 the price
+  series under `DJT` rose 357% and 107%, lifting the book 324% and 97%; those two days alone add
+  57 points a year to the mean. Without them alpha is -3.7% (CAPM), -1.1% (FF3) and 0.4% (FF5),
+  every |t| below 0.2, and the book compounds at -19.3% a year rather than the 7.5% it
+  compounded with them. Those days are the merger
+  announcement of the SPAC whose prices sit under `DJT` before March 2024 (see
+  [Assumptions and Limitations](#assumptions-and-limitations)), not a return on the listed stake
+  in the disclosure. The zero-fill also splits the sample in two. Before the series begins on
+  2021-09-30, 91% of the book earns exactly zero while the regression charges the T-bill rate on
+  all of it. That yields an alpha of -1.2% to -1.6% (t near -3), about 1.0 point of it the T-bill
+  charge on the idle 91% and the rest the small remaining sleeve's own alpha, with a market
+  loading of 0.07. Afterwards the loading is 1.1 to 1.25, so the full-sample 0.53-0.62 is
+  a blend of two regimes rather than an exposure the book ever had. R² is 0.01 because DJT's own
+  moves swamp everything after 2021-09-30 (0.01-0.02 over that period alone). The Trump book and
+  overlays also hold bond, municipal-bond and natural-gas funds (`BND`, `LQD`, `MUB`, `VGIT`,
+  `EMB`, `UNG`) that equity factors do not price, which is part of why even the overlays' R² of
+  0.38-0.75 falls well short of SPY's.
+- **Overlay minus disclosed, the first half of the project question, is "not distinguishable",
+  but the test is weak.** For Buffett and Pelosi none of the twelve estimates is significant at
+  the default seven lags. The largest |t| is 1.9 (Buffett mean-variance minus disclosed, FF5,
+  -6.3%); at 21 lags (one rebalance month) it is 2.0 and just clears 1.96, so that one verdict is
+  borderline rather than settled. With standard errors of 3.3 to 4.5 points a year under FF5, a
+  difference would need to be 9 to 13 points a year to be detected four times in five; the FF5
+  alpha differences actually estimated are 1.0 to 6.3 points (the compounded return gaps are 3.4
+  to 7.0). This is absence of
+  evidence, not evidence that the books perform alike. The consistent negative sign is weaker
+  than twelve estimates suggest: the three models are nested fits of the same series, and within
+  each person the two difference series correlate at 0.94 or more. Hindsight predicts that sign
+  anyway, because the disclosed book is the hindsight-selected one. The Trump rows carry no
+  information in either direction: they are the two SPAC days above with the sign reversed.
+  Mean-variance compounded 0.8 points a year faster than the disclosed Trump book, and without
+  those two days its CAPM difference is +4.4%. All of these differences are gross of trading
+  costs, which would widen every gap in the disclosed book's favor.
+- **Black-Litterman minus mean-variance, the second half of the project question, is the only
+  difference that clears 1.96 at the default seven lags** (at 21 lags Buffett's mean-variance
+  minus disclosed, FF5, reaches -2.0 as well). For Buffett it is +3.7% (CAPM, t 2.3), +3.5% (FF3,
+  t 2.2) and +3.5% (FF5, t 2.2). For Pelosi it is +0.9% (t 0.7), and for Trump -1.0% to -1.3% (t
+  -0.4 to -0.5). At seven lags the Buffett result does not survive a Bonferroni correction across
+  the three case studies (|t| above 2.39); at 15, 21, 42 and 63 lags the CAPM row does (2.42 to
+  2.46), but no model's row reaches the 2.77 bar for all nine difference rows at any of those
+  lags. Little of the lead comes from the hindsight-selected prior. Rerunning Black-Litterman with an equal-weight prior, or
+  with a zero prior, leaves Buffett's difference at +3.3% to +3.5% (t 2.1 to 2.2), and the
+  Black-Litterman weights sit about as far from the disclosed book as mean-variance's do (mean
+  distance 0.42 against 0.43). The lead comes from the posterior itself, which shrinks the
+  six-month sample means toward a prior before optimizing, on a universe that both methods share
+  and that hindsight chose. It is also one case of three: averaged across all three case studies
+  the difference is +1.1% a year (FF5, t 0.9).
 
 ### View confidence interpolates between the two baselines
 
@@ -294,7 +473,7 @@ other two rather than an independent third model.
 > estimation windows an absolute view's entry spans `5e-8` to `7e-4`, and a relative view
 > between two similar bond funds goes lower still, down to `1.9e-8` for BND against VGIT.
 > The fixed constant therefore ranged from negligible at the top of that range to 51 times
-> the quantity it was meant to stabilise at the bottom, and the confidence a user configured
+> the quantity it was meant to stabilize at the bottom, and the confidence a user configured
 > was not the one they got: a configured 0.65 realized as 0.14 for MUB and 0.64 for UNG. The
 > regularization is now proportional to each asset's own variance, so a single absolute view
 > realizes its configured value for every asset to within `2e-6`, and exactly when the ridge
@@ -356,7 +535,7 @@ pi = lambda * Sigma * w_mkt
 ```
 
 where `lambda` is `backtest.risk_aversion` and `w_mkt` is **the disclosed portfolio weights,
-renormalized over the tickers with data in this window**, not true market-capitalisation
+renormalized over the tickers with data in this window**, not true market-capitalization
 weights. This is the single most consequential modeling choice in the repo. Textbook
 Black-Litterman asks what returns would make *the market* efficient; this asks what returns
 would make *this person's book* efficient. The prior is therefore the disclosed portfolio
@@ -522,6 +701,40 @@ mean is itself unusable, which happens for an all-zero diagonal and whenever any
 or infinite, the helper falls back to an absolute `ridge`. Those are the only cases where the
 old behavior is retained.
 
+### Factor attribution
+
+`scripts/factor_attribution.py` and `src/portfolio_bl/backtest/attribution.py` implement a
+separate, standard factor-model regression; it does not touch the three strategies above.
+
+Each strategy's daily return is regressed with an intercept:
+
+```
+r_t - rf_t = alpha + b_1 f_1t + ... + b_k f_kt + e_t
+```
+
+where `f_jt` are factor returns (CAPM: `Mkt-RF`; FF3 adds `SMB`, `HML`; FF5 adds `RMW`, `CMA`,
+from Kenneth French's data library) and `rf_t` is the daily risk-free rate. `alpha_annual = alpha
+* 252`, an arithmetic (not compounded) annualization.
+
+Standard errors are Newey-West (1987) HAC with a Bartlett kernel:
+
+```
+V = (X'X)^-1 S (X'X)^-1
+S = sum_t u_t^2 x_t x_t'  +  sum_{l=1}^{L} w_l * sum_t u_t u_{t-l} (x_t x_{t-l}' + x_{t-l} x_t')
+w_l = 1 - l / (L + 1)
+```
+
+with lag count `L = floor(4 * (T/100)^(2/9))` (7 at the backtest's `T = 1,864`), and no
+small-sample correction.
+
+`rf_t` is derived from the monthly T-bill rate rather than the published daily rate, which is
+rounded to 0.01% a day; see `data/raw/factors/README.md` for the size of that effect. The
+difference rows (each overlay minus the disclosed book, and Black-Litterman minus mean-variance)
+regress a return *difference* without subtracting `rf_t`, since the difference between two fully
+invested portfolios' returns is already a zero-cost excess return. Because the script restricts
+every series to the same dates, the alpha of a difference equals the difference of the two
+alphas exactly.
+
 ## Backtest Semantics
 
 The behavior of `src/portfolio_bl/backtest/engine.py` and `metrics.py`. Figures are for the
@@ -640,16 +853,30 @@ makes these ratios context for the results rather than a reason to discard them.
 **Disclosed values are range tiers, not exact holdings.** House and OGE filings report bands,
 and the loader uses midpoints. The one exception matters: DJT is reported as "over $50M" and
 enters at the lower bound of $50,000,000. Its 91% weight in the Trump book is therefore an
-artefact of that convention as much as a fact about the portfolio, and every Trump figure
+artifact of that convention as much as a fact about the portfolio, and every Trump figure
 inherits that choice.
+
+**The price series under DJT before March 2024 is a SPAC's.** From 2021-09-30 until the merger
+in March 2024, the bundled `DJT` prices are those of Digital World Acquisition Corp (DWAC), the
+special-purpose acquisition company that merged with Trump Media & Technology Group. The
+disclosed stake is in the merged company, so every Trump figure covering that period applies the
+SPAC's price path to it. That path includes the merger-announcement spike of 2021-10-21 and
+2021-10-22, which alone lifts the disclosed book 324% and 97% and dominates the Trump
+disclosed-book alphas and both Trump overlay-minus-disclosed rows under
+[Factor attribution](#factor-attribution). Neither overlay could hold DJT until 2022.
 
 **Sharpe and Sortino assume a zero risk-free rate.** Over a window containing the 2022-2023
 tightening cycle, that flatters every strategy's ratio in absolute terms, though it does not
 change rankings within a case study.
 
-**No statistical significance is computed anywhere.** There are no standard errors, no
-bootstrap, and no significance tests. With 90 rebalances on a single historical path and
-three portfolios, differences of a few hundredths of a Sharpe point should not be read as
+**Statistical significance is computed only for the factor attribution, plus one quoted
+t-statistic.** The regressions under [Factor attribution](#factor-attribution) carry Newey-West
+standard errors and t-statistics, and the Pelosi bullet under
+[Market exposure over time](#market-exposure-over-time) quotes an ordinary t-statistic from a
+single SPY regression. Nothing else in this README does: the headline performance table, the
+Sharpe and Sortino comparisons, the confidence sweep, and the transaction-cost table above all
+carry no standard errors, no bootstrap, and no significance test. With 90 rebalances on a single historical path
+and three portfolios, differences of a few hundredths of a Sharpe point should not be read as
 evidence that one method beats another.
 
 **`prices.csv` is a snapshot.** The refresh script in `data/raw/prices/README.md` passes no
@@ -686,6 +913,12 @@ from portfolio_bl.pipeline import run_case_study
 cfg = load_config("configs/case_studies.yaml")
 result = run_case_study(cfg, person_key="buffett", view_confidence=0.80)
 ```
+
+The optional `data.factors_dir` key points to the directory of bundled Fama-French factor CSVs
+(`data/raw/factors` in the shipped config). When it is set, `run_case_study.py` also writes a
+per-case `factor_attribution.csv` and `scripts/factor_attribution.py` can run; when it is
+absent, `run_case_study.py` skips factor attribution silently and the standalone script raises
+an error.
 
 ## Expressing Views with a Pick Matrix
 
@@ -747,6 +980,7 @@ built.p_matrix, built.q_views, built.confidences  # P (k×n), q (k,), confidence
 - Pelosi holdings come from U.S. House financial disclosure report `10066169` (range-based values converted to midpoints).
 - Trump holdings come from OGE 278e annual disclosure (range-based values converted to midpoints/lower bounds).
 - Bundled `prices.csv` contains real adjusted daily closes sourced from Yahoo Finance (2018–2025); see `data/raw/prices/README.md` for the refresh script.
+- Bundled factor files (`data/raw/factors/`) come from Kenneth French's data library (CRSP vintage 202607); see `data/raw/factors/README.md` for the refresh script and source hashes.
 
 ## Notebooks
 
@@ -762,7 +996,7 @@ jupyter notebook
 | 3 | [Black-Litterman Sensitivity](notebooks/03_black_litterman_sensitivity.ipynb) | View-confidence sweep and metric response |
 | 4 | [Benchmark Attribution & Alpha Decomposition](notebooks/04_benchmark_attribution_alpha_decomposition.ipynb) | Benchmark betas, alpha decomposition, rolling alpha/beta |
 
-Note: Notebook 4 uses ETF benchmarks when present (e.g. `SPY`, `XLK`, `XLE`, `XLF`) and falls back to transparent ticker proxies when benchmark tickers are missing.
+Note: Notebook 4 uses ETF benchmarks when present (e.g. `SPY`, `XLK`, `XLE`, `XLF`) and falls back to transparent ticker proxies when benchmark tickers are missing. Its attribution is descriptive rather than a significance-tested regression, and because the proxy substitution differs by case study, its alpha is not comparable across the three; see [Factor attribution](#factor-attribution) for the reference estimate.
 
 ## Data Status
 
@@ -772,13 +1006,16 @@ Both input datasets now use real data.
 |---|---|---|
 | `data/raw/disclosures/disclosures.csv` | SEC 13F, House FD, OGE 278e (public filings) | Buffett (2025-12-31), Pelosi (2024-12-31), Trump (2024-12-31) |
 | `data/raw/prices/prices.csv` | Yahoo Finance via yfinance (`auto_adjust=True`) | 46 tickers, 2018-01-02 → 2025-12-30, ~90k rows |
+| `data/raw/factors/` (`ff3_daily.csv`, `ff5_daily.csv`, `ff3_monthly.csv`) | Kenneth French's data library, CRSP vintage 202607 | 2018-01-02 → 2026-07-31; 2,156 daily rows per file, 103 monthly rows |
 
-To refresh prices with the latest data, see `data/raw/prices/README.md`.
+To refresh prices with the latest data, see `data/raw/prices/README.md`; to refresh the factor
+files, see `data/raw/factors/README.md`.
 
 ## Output Files
 
-`python scripts/run_case_study.py --person <key>` writes five CSVs to
-`reports/output/<key>/`. Shapes below are for the Buffett case study.
+`python scripts/run_case_study.py --person <key>` writes six CSVs to `reports/output/<key>/`
+(`factor_attribution.csv` is skipped if `data.factors_dir` is not configured; it is, in the
+shipped `configs/case_studies.yaml`). Shapes below are for the Buffett case study.
 
 | File | Shape | Index | Contents |
 |---|---|---|---|
@@ -787,10 +1024,17 @@ To refresh prices with the latest data, see `data/raw/prices/README.md`.
 | `strategy_returns.csv` | 1,864 x 4 | date | Daily portfolio return per strategy |
 | `weights_<strategy>.csv` | 90 x 15 | `rebalance_date` | Weights per ticker at each rebalance |
 | `metadata.csv` | 4 x 2 | key | Person label, snapshot date, asset count, universe |
+| `factor_attribution.csv` | 9 x 18 | (`strategy`, `model`) | Alpha, loadings, t-statistics, R² for each strategy under CAPM/FF3/FF5 |
 
 All values are raw decimals, not percentages: `0.17535...` in `summary.csv` is 17.5%, and
 `max_drawdown` is negative. The weight files carry genuine zeros, since the long-only
 projection drops a large share of the universe in most windows.
+
+`scripts/factor_attribution.py` writes a separate, cross-case combined table to
+`reports/output/factor_attribution.csv`: all three case studies' three strategies under all
+three models, plus a `SPY (check)` validation row and nine return-difference rows (each overlay
+minus the disclosed book, and Black-Litterman minus mean-variance), each under all three models:
+57 rows x 21 columns, with `person` and `strategy` as plain columns instead of an index.
 
 Two traps worth repeating. `weights_<strategy>.csv` is indexed by the rebalance **decision**
 date, one trading day before those weights take effect. And `reports/` is gitignored, so
@@ -799,7 +1043,7 @@ these outputs and the report template are **not** tracked by git, while `data/` 
 ## Development
 
 ```bash
-pytest -q                       # 137 tests, about 2 seconds
+pytest -q                       # 190 tests, about 2 seconds
 ruff check src tests scripts    # linting
 python scripts/make_figures.py  # regenerate docs/figures/ (needs matplotlib)
 ```
@@ -816,18 +1060,21 @@ broken by refreshing the price data.
 
 | File | Tests | Covers |
 |---|---:|---|
+| `tests/test_attribution.py` | 28 | Newey-West OLS, factor regression, return-difference regressions, and the cross-strategy attribution table |
 | `tests/test_black_litterman.py` | 19 | Equilibrium returns, omega, posterior, long-only weights |
 | `tests/test_data_loaders.py` | 15 | Disclosure and price loading, cleaning, return matrix |
+| `tests/test_factor_wiring.py` | 3 | `data.factors_dir` config parsing, and config to loader to pipeline to attribution table on synthetic data (the two scripts themselves are not exercised) |
+| `tests/test_factors_data.py` | 22 | Fama-French CSV loading, validation, and the derived risk-free rate |
 | `tests/test_metrics.py` | 20 | Frequency inference and every performance metric |
 | `tests/test_pipeline_smoke.py` | 9 | End-to-end runs and config error paths |
 | `tests/test_views.py` | 74 | Views, pick-matrix construction, config parsing, ridge calibration |
 
-`ruff` currently reports 15 findings, all pre-existing and cosmetic: import ordering, three
-unused imports in the older test modules, unsorted `__all__` lists, a deprecated import path,
-a non-executable shebang, and one exception-type preference that is deliberate. Thirteen are
+`ruff` currently reports 13 findings, all pre-existing and cosmetic: six import-ordering issues,
+three unused imports in the older test modules, an unsorted `__all__` list, a deprecated import
+path, a non-executable shebang, and one exception-type preference that is deliberate. Eleven are
 auto-fixable with `--fix`. None touch model logic.
 
 ## Current Status and Next Steps
-- Extend benchmark/factor set (e.g. factor-model attribution against Fama-French).
 - Add transaction-cost and slippage assumptions to the backtest engine.
 - Add automated figure export from notebooks to `reports/output/figures/`.
+- Charge the risk-free rate in the Sharpe and Sortino calculations instead of assuming zero.

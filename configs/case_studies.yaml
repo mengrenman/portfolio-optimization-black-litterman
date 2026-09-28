@@ -1,6 +1,7 @@
 data:
   disclosures_path: data/raw/disclosures/disclosures.csv
   prices_path: data/raw/prices/prices.csv
+  factors_dir: data/raw/factors
 
 backtest:
   lookback_periods: 6

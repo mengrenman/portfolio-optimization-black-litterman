@@ -75,12 +75,20 @@ class AppConfig:
         prices_path: Absolute path to the prices CSV.
         backtest: Backtest and model hyper-parameters.
         case_studies: Mapping from case-study key to its configuration.
+        factors_dir: Absolute path to the directory holding the bundled
+            Fama-French factor CSVs (see
+            :func:`portfolio_bl.data.factors.load_fama_french`), read from
+            the optional ``data.factors_dir`` YAML key and resolved against
+            the same root as ``disclosures_path``/``prices_path``. ``None``
+            when the key is absent, in which case factor-attribution
+            reporting is skipped.
     """
 
     disclosures_path: Path
     prices_path: Path
     backtest: BacktestConfig
     case_studies: dict[str, CaseStudyConfig]
+    factors_dir: Path | None = None
 
 
 def _parse_bool(value: object, key: str) -> bool:
@@ -210,12 +218,15 @@ def load_config(path: str | Path) -> AppConfig:
     prices_path = (
         root / data_cfg.get("prices_path", "data/raw/prices/prices.csv")
     ).resolve()
+    factors_dir_raw = data_cfg.get("factors_dir")
+    factors_dir = (root / factors_dir_raw).resolve() if factors_dir_raw is not None else None
 
     logger.debug(
-        "Loaded config: %d case studies, disclosures=%s, prices=%s",
+        "Loaded config: %d case studies, disclosures=%s, prices=%s, factors_dir=%s",
         len(case_studies),
         disclosures_path,
         prices_path,
+        factors_dir,
     )
 
     return AppConfig(
@@ -223,4 +234,5 @@ def load_config(path: str | Path) -> AppConfig:
         prices_path=prices_path,
         backtest=backtest,
         case_studies=case_studies,
+        factors_dir=factors_dir,
     )
