@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from portfolio_bl.backtest.attribution import (
+    FrequencyMismatchError,
     attribution_table,
     factor_regression,
     newey_west_lags,
@@ -429,6 +430,26 @@ def test_monthly_returns_against_daily_factors_raises() -> None:
     returns = pd.Series(rng.normal(0.01, 0.02, len(monthly_dates)), index=monthly_dates)
 
     with pytest.raises(ValueError, match="12 period.*252|252 period.*12"):
+        factor_regression(returns, factors)
+
+
+def test_frequency_mismatch_error_is_a_value_error_subclass() -> None:
+    assert issubclass(FrequencyMismatchError, ValueError)
+
+
+def test_monthly_returns_against_daily_factors_raises_frequency_mismatch_error() -> None:
+    """The frequency guard must raise the specific
+    :class:`FrequencyMismatchError` subclass, not a bare :class:`ValueError`,
+    so callers can distinguish it from every other way the regression fails.
+    """
+    rng = np.random.default_rng(17)
+    n_daily = 400
+    factors = _make_ff3(rng, n_daily)
+
+    monthly_dates = pd.date_range("2020-01-31", periods=18, freq="ME")
+    returns = pd.Series(rng.normal(0.01, 0.02, len(monthly_dates)), index=monthly_dates)
+
+    with pytest.raises(FrequencyMismatchError):
         factor_regression(returns, factors)
 
 

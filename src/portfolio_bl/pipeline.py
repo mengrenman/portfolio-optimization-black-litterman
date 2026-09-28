@@ -46,6 +46,15 @@ class CaseStudyResult:
             :func:`~portfolio_bl.backtest.metrics.risk_free_per_period`) over
             the disclosed strategy's return dates. ``0.0`` when
             ``app_config.factors_dir`` is not configured.
+        risk_free_series: The per-period risk-free-rate series on the price
+            calendar, from the price date that opens the earliest strategy
+            return onward (see
+            :func:`~portfolio_bl.backtest.metrics.risk_free_per_period`) -- the
+            exact series charged as every strategy's Sharpe/Sortino
+            numerator hurdle (see
+            :func:`~portfolio_bl.backtest.metrics.summarize_strategy`) and
+            annualized into :attr:`risk_free_rate`. ``None`` when
+            ``app_config.factors_dir`` is not configured.
     """
 
     person_label: str
@@ -54,6 +63,7 @@ class CaseStudyResult:
     strategy_results: dict[str, BacktestResult]
     summary: pd.DataFrame
     risk_free_rate: float = 0.0
+    risk_free_series: pd.Series | None = None
 
 
 def _constant_weight_fn(weights: pd.Series):
@@ -129,7 +139,10 @@ def run_case_study(
     Raises:
         ValueError: If ``person_key`` is not found in the config, the universe
             intersection has fewer than 2 assets, or other data validation
-            errors occur in upstream loaders.
+            errors occur in upstream loaders; or, when
+            ``app_config.factors_dir`` is set, if the charged price dates reach
+            more than 63 business days beyond the factor files' coverage (see
+            :func:`~portfolio_bl.backtest.metrics.risk_free_per_period`).
     """
     if person_key not in app_config.case_studies:
         keys = ", ".join(sorted(app_config.case_studies))
@@ -312,8 +325,18 @@ def run_case_study(
         daily_risk_free = load_fama_french(app_config.factors_dir, "capm")["rf"]
         # Convert once, over the price calendar (not any one strategy's return
         # dates), so every strategy is charged the same correctly-compounded
-        # per-period rate regardless of the backtest's frequency.
-        risk_free_series = risk_free_per_period(daily_risk_free, price_dates)
+        # per-period rate regardless of the backtest's frequency. Only the
+        # charged window is converted: it opens at the price date before the
+        # earliest strategy return, so lookback months that are never charged
+        # cannot trip the extension cap.
+        first_returns = [r.returns.index[0] for r in strategy_results.values() if not r.returns.empty]
+        if first_returns:
+            opening = price_dates[price_dates < min(first_returns)]
+            start = opening[-1] if len(opening) else min(first_returns)
+            charge_calendar = price_dates[price_dates >= start]
+        else:
+            charge_calendar = price_dates
+        risk_free_series = risk_free_per_period(daily_risk_free, charge_calendar)
     else:
         risk_free_series = None
 
@@ -347,4 +370,5 @@ def run_case_study(
         strategy_results=strategy_results,
         summary=summary,
         risk_free_rate=risk_free_rate,
+        risk_free_series=risk_free_series,
     )

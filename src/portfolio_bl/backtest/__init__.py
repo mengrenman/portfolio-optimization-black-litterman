@@ -2,6 +2,7 @@
 
 from portfolio_bl.backtest.attribution import (
     FactorRegression,
+    FrequencyMismatchError,
     RegressionResult,
     attribution_table,
     factor_regression,
@@ -26,6 +27,7 @@ from portfolio_bl.backtest.metrics import (
 __all__ = [
     "BacktestResult",
     "FactorRegression",
+    "FrequencyMismatchError",
     "RegressionResult",
     "annualized_return",
     "annualized_risk_free",

@@ -88,7 +88,9 @@ def annualized_volatility(returns: pd.Series, periods_per_year: int) -> float:
 
 
 def risk_free_per_period(
-    daily_risk_free: pd.Series, calendar: pd.DatetimeIndex
+    daily_risk_free: pd.Series,
+    calendar: pd.DatetimeIndex,
+    max_extension_days: int = 63,
 ) -> pd.Series:
     """Compound a daily risk-free series into one rate per period of ``calendar``.
 
@@ -120,8 +122,23 @@ def risk_free_per_period(
     bundled factor file's last month), the missing days are extended at the
     nearest available daily rate -- the first rate for days before coverage,
     the last for days after -- compounded over the number of *business* days
-    (via :func:`numpy.busday_count`) in the missing span. Every period that
-    needed such an extension is folded into a single warning.
+    (via :func:`numpy.busday_count`) in the missing span. That extension is
+    capped at ``max_extension_days`` business days on each side (63 by
+    default, about three months of weekdays, exchange holidays included; the
+    bundled factor snapshot, downloaded 2026-09-25 with data through
+    2026-07-31, was 40 weekdays behind on the day it was fetched, so a
+    same-day refresh of prices and factors normally stays inside the cap): a
+    calendar reaching further than that before or after coverage raises
+    instead of silently compounding hundreds of days at a single stale rate.
+    Extrapolated business days are counted strictly outside coverage, so the
+    first and last covered days are never counted, and the cap and the
+    warning behave the same on both sides. When at least one business day was actually
+    extrapolated, every period that received one is folded into a single
+    warning reporting the total number of extrapolated business days (a
+    calendar boundary that lands just outside coverage but on a non-business
+    day, e.g. the Saturday right after the last covered Friday, contributes
+    zero extrapolated business days and is not counted, and no warning is
+    raised if the total is zero).
 
     Args:
         daily_risk_free: Daily risk-free-rate series (decimal, not percent),
@@ -131,6 +148,10 @@ def risk_free_per_period(
             strategy's price-date index (so ``calendar[0]`` is the opening
             boundary of the first return period). Sorted and de-duplicated
             before use.
+        max_extension_days: Maximum number of business days the calendar may
+            reach beyond ``daily_risk_free``'s coverage on either side before
+            this function refuses to extend further. Defaults to 63 (about a
+            quarter of business days).
 
     Returns:
         A Series indexed by ``calendar[1:]`` (after sorting/de-duplication)
@@ -139,9 +160,11 @@ def risk_free_per_period(
         non-null dates.
 
     Raises:
-        ValueError: If ``daily_risk_free`` is empty (after dropping NaNs), or
-            if no period spanned by ``calendar`` overlaps ``daily_risk_free``'s
-            date coverage at all.
+        ValueError: If ``daily_risk_free`` is empty (after dropping NaNs); if
+            no daily rate is dated in the half-open span ``(calendar[0],
+            calendar[-1]]`` that the calendar's periods cover; or if the
+            extension needed before or after ``daily_risk_free``'s coverage
+            exceeds ``max_extension_days`` business days.
     """
     daily = daily_risk_free.dropna().sort_index()
     if daily.empty:
@@ -156,9 +179,15 @@ def risk_free_per_period(
 
     d_min = daily.index[0]
     d_max = daily.index[-1]
-    if cal[-1] < d_min or cal[0] > d_max:
+    # Periods are the half-open intervals (cal[i-1], cal[i]], so the union of
+    # every period the calendar spans is exactly (cal[0], cal[-1]]. A
+    # calendar starting exactly on the last covered day (cal[0] == d_max) has
+    # no rate in that span even though cal[0] itself is covered -- the old
+    # `cal[-1] < d_min or cal[0] > d_max` check missed this off-by-one case.
+    overlap = daily.index[(daily.index > cal[0]) & (daily.index <= cal[-1])]
+    if overlap.empty:
         raise ValueError(
-            f"No period spanned by the calendar ({cal[0].date()}..{cal[-1].date()}) "
+            f"No period spanned by the calendar ({cal[0].date()}, {cal[-1].date()}] "
             f"overlaps the daily risk-free series' coverage ({d_min.date()}..{d_max.date()})."
         )
 
@@ -181,39 +210,80 @@ def risk_free_per_period(
         s_values[within_mask] = cum_log_growth[positions]
 
     # Outside coverage, extend at the nearest boundary rate over the number
-    # of business days in the missing span. Shifting both ends of the
-    # np.busday_count interval by one calendar day turns its half-open
-    # [begin, end) convention into the (excluded start, included end] this
-    # function wants, in both directions.
+    # of business days strictly outside coverage. After coverage, shifting
+    # both ends of np.busday_count's half-open [begin, end) interval by one
+    # calendar day counts the business days in (d_max, t]. Before coverage,
+    # the count is the business days in (t, d_min): d_min's own real rate is
+    # already in cum_log_growth[0], so it is neither extrapolated nor counted,
+    # capped or warned about.
+    #
+    # ext_before[i]/ext_after[i] hold, for each calendar point, the number of
+    # business days it reaches before d_min / after d_max (0 elsewhere).
+    # Both are monotonic in the sorted calendar (non-increasing / non-
+    # decreasing), so per-period extrapolated business days -- and the
+    # overall extension needed at each end -- can be read off their
+    # differences without re-deriving the business-day counts.
     one_day = np.timedelta64(1, "D")
+    ext_before = np.zeros(len(cal), dtype=np.int64)
+    ext_after = np.zeros(len(cal), dtype=np.int64)
+
     if before_mask.any():
         before_days = cal_values[before_mask].astype("datetime64[D]")
         d_min_day = d_min.to_numpy().astype("datetime64[D]")
-        n_bd = np.busday_count(before_days + one_day, d_min_day + one_day)
-        s_values[before_mask] = cum_log_growth[0] - log_rate[0] * n_bd
+        n_bd_before = np.busday_count(before_days + one_day, d_min_day)
+        max_before = int(n_bd_before.max())
+        if max_before > max_extension_days:
+            raise ValueError(
+                f"The price calendar starts {cal[0].date()}, {max_before} business day(s) "
+                f"before the daily risk-free series begins ({d_min.date()}); at most "
+                f"max_extension_days={max_extension_days} are filled at the first available "
+                "rate. Re-fetch the factor files from an earlier date (python "
+                f"scripts/fetch_fama_french.py --start {cal[0].date()}) or start the prices "
+                "later."
+            )
+        ext_before[before_mask] = n_bd_before
+        s_values[before_mask] = -log_rate[0] * n_bd_before
 
     if after_mask.any():
         after_days = cal_values[after_mask].astype("datetime64[D]")
         d_max_day = d_max.to_numpy().astype("datetime64[D]")
-        n_bd = np.busday_count(d_max_day + one_day, after_days + one_day)
-        s_values[after_mask] = cum_log_growth[-1] + log_rate[-1] * n_bd
+        n_bd_after = np.busday_count(d_max_day + one_day, after_days + one_day)
+        max_after = int(n_bd_after.max())
+        if max_after > max_extension_days:
+            last_fillable = np.busday_offset(d_max_day, max_extension_days, roll="forward")
+            raise ValueError(
+                f"The price calendar ends {cal[-1].date()}, {max_after} business day(s) after "
+                f"the daily risk-free series ends ({d_max.date()}); at most "
+                f"max_extension_days={max_extension_days} are filled at the last available "
+                "rate. Refresh the factor files (python scripts/fetch_fama_french.py) or, if "
+                f"French has not published that far yet, end the prices on or before "
+                f"{last_fillable}."
+            )
+        ext_after[after_mask] = n_bd_after
+        s_values[after_mask] = cum_log_growth[-1] + log_rate[-1] * n_bd_after
 
     period_ends = cal[1:]
     period_rates = np.exp(s_values[1:] - s_values[:-1]) - 1.0
 
-    extended = before_mask | after_mask
-    period_extended = extended[1:] | extended[:-1]
+    # Business days actually extrapolated into each period -- not merely
+    # whether one of its boundary calendar points falls outside coverage,
+    # which can be true while contributing zero business days (e.g. a
+    # calendar boundary on the Saturday right after the last covered Friday).
+    extrapolated_days = (ext_before[:-1] - ext_before[1:]) + (ext_after[1:] - ext_after[:-1])
+    period_extended = extrapolated_days > 0
     n_extended = int(period_extended.sum())
-    if n_extended > 0:
+    total_extrapolated = int(extrapolated_days.sum())
+    if total_extrapolated > 0:
         extended_ends = period_ends[period_extended]
         logger.warning(
             "%d of %d period(s) extend beyond the daily risk-free series' coverage "
-            "(%s..%s); extended using the nearest boundary daily rate over the "
-            "missing business days (first extended period ends %s, last %s).",
+            "(%s..%s), extrapolating %d business day(s) total using the nearest "
+            "boundary daily rate (first extended period ends %s, last %s).",
             n_extended,
             len(period_ends),
             d_min.date(),
             d_max.date(),
+            total_extrapolated,
             extended_ends.min().date(),
             extended_ends.max().date(),
         )
@@ -231,13 +301,15 @@ def annualized_risk_free(
     with a strategy's ``annualized_return`` computed over the same dates.
 
     ``risk_free`` must already hold exactly one rate per return period of
-    ``index`` -- this function does no frequency conversion of its own. In
-    particular, do **not** pass a *daily* risk-free series here when
-    ``index`` is a monthly (or weekly, or any non-daily) return-date index:
-    reindexing would silently keep only one day's rate per period, charging
-    roughly ``1/periods_per_year_of_the_daily_series`` of the true period
-    rate. Use :func:`risk_free_per_period` first to compound a daily series
-    into one rate per period of ``index``, then pass that result here.
+    ``index`` -- this function does no frequency conversion of its own and
+    refuses a series that looks finer than that (see the ``ValueError``
+    below). In particular, do **not** pass a *daily* risk-free series here
+    when ``index`` is a monthly (or weekly, or any non-daily) return-date
+    index: reindexing would silently keep only one day's rate per period,
+    charging roughly ``1/periods_per_year_of_the_daily_series`` of the true
+    period rate. Use :func:`risk_free_per_period` first to compound a daily
+    series into one rate per period of ``index``, then pass that result
+    here.
 
     Some of ``index`` may fall outside ``risk_free``'s coverage -- for
     example when prices have been refreshed past the bundled factor file's
@@ -258,11 +330,28 @@ def annualized_risk_free(
         if ``index`` is empty.
 
     Raises:
-        ValueError: If none of the dates in ``index`` are covered by
+        ValueError: If ``risk_free`` has more than 1.5x as many non-null
+            observations dated within ``index``'s own date range as
+            ``index`` has entries -- a sign that ``risk_free`` is finer than
+            the return periods (e.g. a daily series against monthly
+            returns) and must be converted with :func:`risk_free_per_period`
+            first; or if none of the dates in ``index`` are covered by
             ``risk_free``.
     """
     if len(index) == 0:
         return 0.0
+
+    non_null = risk_free.dropna()
+    in_range = non_null[(non_null.index >= index.min()) & (non_null.index <= index.max())]
+    if len(in_range) > 1.5 * len(index):
+        raise ValueError(
+            f"risk_free has {len(in_range)} non-null observation(s) dated within index's own "
+            f"date range ({index.min().date()}..{index.max().date()}), more than 1.5x the "
+            f"{len(index)} period(s) in index. It looks finer than the return periods (e.g. a "
+            "daily risk-free series against monthly returns), which would silently keep only "
+            "one day's rate per period if reindexed directly here. Convert it first with "
+            "risk_free_per_period(daily_rf, price_dates), then pass that result here."
+        )
 
     reindexed = risk_free.reindex(index)
     missing = reindexed.isna()
@@ -432,10 +521,15 @@ def summarize_strategy(
         weight_history: Rebalance-date weight history DataFrame.
         periods_per_year: Number of return periods per calendar year.
         risk_free: Optional per-period risk-free-rate series (decimal, not
-            percent), such as ``load_fama_french(directory, "capm")["rf"]``.
-            When given, it is reindexed to ``returns.index`` and
-            geometrically annualized via :func:`annualized_risk_free` (0.0
-            when ``returns`` is empty), and that rate is charged as the
+            percent), with one rate per period of ``returns.index`` -- see
+            :func:`risk_free_per_period` to derive this from a daily series
+            such as ``load_fama_french(directory, "capm")["rf"]`` (passing
+            that daily series directly here is refused whenever it has more
+            than 1.5 times as many dates as there are returns inside the
+            return span; see :func:`annualized_risk_free`). When given, it is reindexed to
+            ``returns.index`` and geometrically annualized via
+            :func:`annualized_risk_free` (0.0 when ``returns`` is empty), and
+            that rate is charged as the
             numerator's hurdle in both ``sharpe`` and ``sortino`` — their
             denominators are unaffected; see :func:`sharpe_ratio` and
             :func:`sortino_ratio`. When ``None`` (default), both ratios use a

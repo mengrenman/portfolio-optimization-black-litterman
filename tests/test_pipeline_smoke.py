@@ -226,6 +226,7 @@ def test_pipeline_risk_free_rate_zero_without_factors_dir(tmp_path: Path) -> Non
 
     result = run_case_study(app_config, person_key="buffett")
     assert result.risk_free_rate == 0.0
+    assert result.risk_free_series is None
 
     periods_per_year = infer_periods_per_year(
         next(iter(result.strategy_results.values())).returns.index
@@ -260,7 +261,11 @@ def test_pipeline_with_factors_dir_charges_risk_free_rate(tmp_path: Path) -> Non
     prices = load_prices_csv(app_config.prices_path)
     price_dates = pd.DatetimeIndex(sorted(prices["date"].unique()))
     daily_risk_free = load_fama_french(app_config.factors_dir, "capm")["rf"]
-    risk_free_series = risk_free_per_period(daily_risk_free, price_dates)
+    # The pipeline converts only the charged window: from the price date that
+    # opens the earliest strategy return onward.
+    first_return = min(r.returns.index[0] for r in result.strategy_results.values())
+    opening = price_dates[price_dates < first_return][-1]
+    risk_free_series = risk_free_per_period(daily_risk_free, price_dates[price_dates >= opening])
 
     periods_per_year = infer_periods_per_year(
         next(iter(result.strategy_results.values())).returns.index
@@ -278,10 +283,9 @@ def test_pipeline_with_factors_dir_charges_risk_free_rate(tmp_path: Path) -> Non
 
     # The old, wrong approach: reindexing the raw daily series directly onto
     # the monthly return dates, keeping one arbitrary day's rate per month.
-    old_wrong_rate = annualized_risk_free(
-        daily_risk_free, disclosed.returns.index, periods_per_year
-    )
-    assert old_wrong_rate < result.risk_free_rate / 15
+    # annualized_risk_free's frequency guard now refuses this outright.
+    with pytest.raises(ValueError, match="finer than the return periods"):
+        annualized_risk_free(daily_risk_free, disclosed.returns.index, periods_per_year)
 
     for name, sr in result.strategy_results.items():
         rf_annual = annualized_risk_free(risk_free_series, sr.returns.index, periods_per_year)
@@ -289,6 +293,36 @@ def test_pipeline_with_factors_dir_charges_risk_free_rate(tmp_path: Path) -> Non
         ann_vol = annualized_volatility(sr.returns, periods_per_year)
         expected_sharpe = (ann_ret - rf_annual) / ann_vol
         assert result.summary.loc[name, "sharpe"] == pytest.approx(expected_sharpe)
+
+    assert result.risk_free_series is not None
+    pd.testing.assert_series_equal(result.risk_free_series, risk_free_series)
+
+
+def test_pipeline_converts_only_the_charged_window(tmp_path: Path) -> None:
+    """Factor files that begin after the prices but before the first charged
+    return must not trip the extension cap. The lookback months are never
+    charged, so the run succeeds and charges exactly what full coverage would.
+    """
+    config_path = _write_smoke_fixtures_with_factors_dir(tmp_path)
+    app_config = load_config(config_path)
+    full = run_case_study(app_config, person_key="buffett")
+
+    factors_dir = app_config.factors_dir
+    daily = pd.read_csv(factors_dir / "ff3_daily.csv", dtype=str)
+    daily[daily["date"] >= "2024-05-01"].to_csv(factors_dir / "ff3_daily.csv", index=False)
+    monthly = pd.read_csv(factors_dir / "ff3_monthly.csv", dtype=str)
+    monthly[monthly["date"] >= "2024-05"].to_csv(factors_dir / "ff3_monthly.csv", index=False)
+
+    # Converting over the whole price calendar would now exceed the cap ...
+    price_dates = pd.DatetimeIndex(sorted(load_prices_csv(app_config.prices_path)["date"].unique()))
+    trimmed = load_fama_french(factors_dir, "capm")["rf"]
+    with pytest.raises(ValueError, match="max_extension_days"):
+        risk_free_per_period(trimmed, price_dates)
+
+    # ... but the pipeline converts only from the opening of the first return.
+    late = run_case_study(app_config, person_key="buffett")
+    assert late.risk_free_rate == pytest.approx(full.risk_free_rate, rel=1e-12)
+    pd.testing.assert_frame_equal(late.summary, full.summary)
 
 
 # ---------------------------------------------------------------------------

@@ -176,6 +176,35 @@ def test_annualized_risk_free_empty_index_returns_zero() -> None:
     assert annualized_risk_free(rf, idx, periods_per_year=12) == 0.0
 
 
+def test_annualized_risk_free_rejects_daily_series_against_monthly_index() -> None:
+    """A daily risk-free series reindexed directly onto monthly return dates
+    would silently keep only one day's rate per month; must be refused.
+    """
+    daily_idx = pd.bdate_range("2024-01-01", periods=252)
+    rf = pd.Series(0.0001, index=daily_idx)
+    monthly_index = pd.date_range("2024-01-31", periods=11, freq="ME")
+
+    with pytest.raises(ValueError, match="finer than the return periods"):
+        annualized_risk_free(rf, monthly_index, periods_per_year=12)
+
+
+def test_annualized_risk_free_accepts_correctly_converted_per_period_series() -> None:
+    """The frequency guard must not fire on a series already converted by
+    :func:`risk_free_per_period` -- exactly one rate per return period.
+    """
+    daily_idx = pd.bdate_range("2024-01-01", "2024-12-31")
+    rf = pd.Series(0.0001, index=daily_idx)
+    calendar = pd.DatetimeIndex([daily_idx[0]]).append(
+        pd.bdate_range("2024-01-01", "2024-12-31", freq="BME")
+    )
+
+    per_period = risk_free_per_period(rf, calendar)
+    assert len(per_period) == 12
+
+    result = annualized_risk_free(per_period, per_period.index, periods_per_year=12)
+    assert np.isfinite(result)
+
+
 # ---------------------------------------------------------------------------
 # risk_free_per_period
 # ---------------------------------------------------------------------------
@@ -232,8 +261,9 @@ def test_risk_free_per_period_is_frequency_invariant_when_annualized() -> None:
 
     The same computation with the *old* approach -- reindexing the raw daily
     series directly onto the month-end dates, so only one arbitrary day's
-    rate represents each ~21-day period -- is also shown here, and comes out
-    roughly 21x too small, which is the bug this function fixes.
+    rate represents each ~21-day period -- is also attempted here, and must
+    now be refused outright by :func:`annualized_risk_free`'s frequency
+    guard, which is the bug this function (and that guard) fix.
     """
     bdays = pd.bdate_range("2024-01-01", periods=253)  # 252 periods + 1 opening boundary
     rng = np.random.default_rng(2)
@@ -253,10 +283,10 @@ def test_risk_free_per_period_is_frequency_invariant_when_annualized() -> None:
     assert ann_daily == pytest.approx(ann_month_end, abs=1e-12)
 
     # The old, wrong approach: annualized_risk_free called directly on the raw
-    # daily series over the month-end dates, which reindexes and so keeps only
-    # one day's rate per ~21-day period.
-    old_wrong = annualized_risk_free(rf, month_end_calendar[1:], periods_per_year=12)
-    assert old_wrong < ann_month_end / 15  # roughly 1/21 of the true rate
+    # daily series over the month-end dates, which would reindex and so keep
+    # only one day's rate per ~21-day period. Now refused outright.
+    with pytest.raises(ValueError, match="finer than the return periods"):
+        annualized_risk_free(rf, month_end_calendar[1:], periods_per_year=12)
 
 
 def test_risk_free_per_period_extends_after_coverage_with_one_warning(
@@ -304,9 +334,8 @@ def test_risk_free_per_period_extends_before_coverage_symmetrically(
             np.datetime64("2024-01-01", "D") + np.timedelta64(1, "D"),
         )
     )
-    # 1/1 falls inside the extension's own business-day count (it is the
-    # nearest available rate the extension uses), and 1/2..1/5 are the
-    # remaining 4 real daily rates actually inside (cal0, 1/5].
+    # n_bd_before counts (12/22, 1/1], i.e. the 5 extrapolated business days
+    # plus 1/1's own real rate, and 1/2..1/5 are the remaining 4 real rates.
     expected = (1.0001) ** (n_bd_before + 4) - 1.0
     assert result.iloc[0] == pytest.approx(expected)
 
@@ -320,6 +349,170 @@ def test_risk_free_per_period_no_overlap_raises() -> None:
     calendar = pd.to_datetime(["2024-01-01", "2024-02-01"])
     with pytest.raises(ValueError, match="No period spanned by the calendar"):
         risk_free_per_period(rf, calendar)
+
+
+def test_risk_free_per_period_calendar_starting_on_last_covered_day_raises() -> None:
+    """Off-by-one regression test: periods are the half-open interval
+    ``(cal[i-1], cal[i]]``, so a calendar whose first date equals the last
+    day covered by ``daily_risk_free`` (``cal[0] == d_max``) has no period
+    overlapping any real daily rate at all -- the only period it defines,
+    ``(d_max, cal[1]]``, is entirely past coverage. The old
+    ``cal[-1] < d_min or cal[0] > d_max`` check missed this (``cal[0] ==
+    d_max`` is not ``> d_max``) and did not raise.
+    """
+    daily_idx = pd.bdate_range("2024-01-01", periods=5)  # Mon 1/1 .. Fri 1/5
+    rf = pd.Series(0.0001, index=daily_idx)
+    calendar = pd.to_datetime(["2024-01-05", "2024-01-12"])  # cal[0] == d_max
+
+    with pytest.raises(ValueError, match="No period spanned by the calendar"):
+        risk_free_per_period(rf, calendar)
+
+
+def test_risk_free_per_period_cap_exceeded_before_coverage_raises() -> None:
+    daily_idx = pd.bdate_range("2024-06-01", periods=5)
+    rf = pd.Series(0.0001, index=daily_idx)
+    # 99 business days before d_min -- well past the default 63-day cap.
+    far_before = pd.bdate_range(end=daily_idx[0], periods=100)[0]
+    calendar = pd.DatetimeIndex([far_before, daily_idx[-1]])
+
+    with pytest.raises(ValueError, match=r"business day.*max_extension_days"):
+        risk_free_per_period(rf, calendar)
+
+
+def test_risk_free_per_period_cap_exceeded_after_coverage_raises() -> None:
+    daily_idx = pd.bdate_range("2024-06-01", periods=5)
+    rf = pd.Series(0.0001, index=daily_idx)
+    # 99 business days after d_max -- well past the default 63-day cap.
+    far_after = pd.bdate_range(start=daily_idx[-1], periods=100)[-1]
+    calendar = pd.DatetimeIndex([daily_idx[0], far_after])
+
+    with pytest.raises(ValueError, match=r"business day.*max_extension_days"):
+        risk_free_per_period(rf, calendar)
+
+
+def test_risk_free_per_period_max_extension_days_respected() -> None:
+    """A calendar reaching further than the default cap raises, but succeeds
+    once ``max_extension_days`` is raised enough to accommodate it.
+    """
+    daily_idx = pd.bdate_range("2024-06-01", periods=5)
+    rf = pd.Series(0.0001, index=daily_idx)
+    far_after = pd.bdate_range(start=daily_idx[-1], periods=100)[-1]
+    calendar = pd.DatetimeIndex([daily_idx[0], far_after])
+
+    with pytest.raises(ValueError, match="max_extension_days"):
+        risk_free_per_period(rf, calendar)
+
+    result = risk_free_per_period(rf, calendar, max_extension_days=200)
+    assert len(result) == 1
+    assert np.isfinite(result.iloc[0])
+
+
+def test_risk_free_per_period_saturday_boundary_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A calendar boundary that falls outside coverage but on a non-business
+    day (the Saturday right after the last covered Friday) contributes zero
+    extrapolated business days and must not trigger a warning.
+    """
+    daily_idx = pd.bdate_range("2024-01-01", periods=5)  # Mon 1/1 .. Fri 1/5
+    rf = pd.Series(0.0001, index=daily_idx)
+    calendar = pd.to_datetime(["2024-01-01", "2024-01-06"])  # 2024-01-06 is a Saturday
+
+    with caplog.at_level(logging.WARNING, logger="portfolio_bl.backtest.metrics"):
+        result = risk_free_per_period(rf, calendar)
+
+    expected = float(np.prod(1.0 + rf.iloc[1:].to_numpy()) - 1.0)  # rates for 1/2..1/5
+    assert result.iloc[0] == pytest.approx(expected)
+
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warning_records) == 0
+
+
+def test_risk_free_per_period_saturday_boundary_before_coverage_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Before-coverage twin of the Saturday test: a boundary on the Saturday
+    before the first covered Monday extrapolates zero business days."""
+    daily_idx = pd.bdate_range("2024-01-08", "2024-01-19")  # Mon 1/8 .. Fri 1/19
+    rf = pd.Series(0.0001, index=daily_idx)
+    calendar = pd.to_datetime(["2024-01-06", "2024-01-10"])  # Sat 1/6, Wed 1/10
+
+    with caplog.at_level(logging.WARNING, logger="portfolio_bl.backtest.metrics"):
+        result = risk_free_per_period(rf, calendar)
+
+    assert result.iloc[0] == pytest.approx(1.0001**3 - 1.0)  # 1/8, 1/9, 1/10
+    assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+
+
+def test_risk_free_per_period_cap_is_symmetric(caplog: pytest.LogCaptureFixture) -> None:
+    """Exactly max_extension_days extrapolated business days pass on either
+    side and are reported as such; one more raises on either side."""
+    daily_idx = pd.bdate_range("2024-06-03", periods=20)
+    rf = pd.Series(0.0001, index=daily_idx)
+    d_min = np.datetime64(daily_idx[0].date(), "D")
+    d_max = np.datetime64(daily_idx[-1].date(), "D")
+
+    def before(n: int) -> pd.Timestamp:
+        # n business days strictly between the returned date and d_min.
+        return pd.Timestamp(np.busday_offset(d_min, -(n + 1)))
+
+    def after(n: int) -> pd.Timestamp:
+        return pd.Timestamp(np.busday_offset(d_max, n))
+
+    for side_calendar in (
+        pd.DatetimeIndex([before(63), daily_idx[5]]),
+        pd.DatetimeIndex([daily_idx[5], after(63)]),
+    ):
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="portfolio_bl.backtest.metrics"):
+            risk_free_per_period(rf, side_calendar)
+        messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(messages) == 1
+        assert "63 business day" in messages[0]
+
+    for side_calendar in (
+        pd.DatetimeIndex([before(64), daily_idx[5]]),
+        pd.DatetimeIndex([daily_idx[5], after(64)]),
+    ):
+        with pytest.raises(ValueError, match="64 business day"):
+            risk_free_per_period(rf, side_calendar)
+
+
+def test_risk_free_per_period_warning_reports_period_count(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    daily_idx = pd.bdate_range("2024-01-01", periods=5)  # Mon 1/1 .. Fri 1/5
+    rf = pd.Series(0.0001, index=daily_idx)
+    calendar = pd.to_datetime(["2024-01-03", "2024-01-04", "2024-01-08"])  # Mon 1/8 past coverage
+
+    with caplog.at_level(logging.WARNING, logger="portfolio_bl.backtest.metrics"):
+        risk_free_per_period(rf, calendar)
+
+    messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(messages) == 1
+    assert "1 of 2 period(s)" in messages[0]
+    assert "1 business day" in messages[0]
+
+
+def test_risk_free_per_period_warning_reports_business_day_count(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    daily_idx = pd.bdate_range("2024-01-01", periods=5)  # Mon 1/1 .. Fri 1/5
+    rf = pd.Series(0.0001, index=daily_idx)
+    calendar = pd.to_datetime(["2024-01-01", "2024-01-12"])  # 5 business days after d_max
+
+    with caplog.at_level(logging.WARNING, logger="portfolio_bl.backtest.metrics"):
+        risk_free_per_period(rf, calendar)
+
+    n_bd_after = int(
+        np.busday_count(
+            np.datetime64("2024-01-05", "D") + np.timedelta64(1, "D"),
+            np.datetime64("2024-01-12", "D") + np.timedelta64(1, "D"),
+        )
+    )
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warning_records) == 1
+    assert f"{n_bd_after} business day" in warning_records[0].getMessage()
 
 
 def test_risk_free_per_period_empty_daily_series_raises() -> None:

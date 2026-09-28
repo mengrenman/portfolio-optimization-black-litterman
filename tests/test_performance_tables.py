@@ -10,9 +10,11 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
+from test_pipeline_smoke import _write_smoke_fixtures_with_factors_dir
 
 from portfolio_bl.backtest.metrics import infer_periods_per_year, sharpe_ratio
 from portfolio_bl.config import load_config
+from portfolio_bl.data.factors import load_fama_french
 from portfolio_bl.data.prices import load_prices_csv, to_return_matrix
 from portfolio_bl.pipeline import run_case_study
 
@@ -153,6 +155,55 @@ def _write_fixture_with_factors_dir(tmp_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# (0) _rf_annual_fn reuses the pipeline's own per-period conversion
+# ---------------------------------------------------------------------------
+
+
+def test_rf_annual_fn_matches_pipeline_and_true_rate_on_monthly_prices(tmp_path):
+    """``_rf_annual_fn`` must charge exactly the pipeline's own per-period
+    risk-free series (``CaseStudyResult.risk_free_series``), not reconvert
+    the daily series itself -- and certainly not fall back to reindexing the
+    raw daily series directly onto monthly dates, which would silently keep
+    only one day's (derived) rate per month, about 1/21 of the truth.
+
+    Uses MONTHLY (BME) prices, exactly the frequency at which the old,
+    reindex-based approach was wrong, with a constant synthetic 0.2%/month
+    T-bill rate (``ff3_monthly.csv`` in
+    :func:`_write_smoke_fixtures_with_factors_dir`) so the true annualized
+    rate is known exactly: ``(1.002)**12 - 1``.
+    """
+    config_path = _write_smoke_fixtures_with_factors_dir(tmp_path)
+    app_config = load_config(config_path)
+    assert app_config.factors_dir is not None
+
+    result = run_case_study(app_config, person_key="buffett")
+    results = {"buffett": result}
+    rf_annual_fn = pt._rf_annual_fn(results, zero_rf=False)
+
+    disclosed_dates = result.strategy_results["disclosed"].returns.index
+    periods_per_year = infer_periods_per_year(disclosed_dates)
+    assert periods_per_year == 12
+
+    script_rf = rf_annual_fn("buffett", disclosed_dates, periods_per_year)
+
+    # Exactly the pipeline's own annualized rate (same series, same dates).
+    assert result.risk_free_series is not None
+    assert script_rf == pytest.approx(result.risk_free_rate)
+
+    # Close to the true rate.
+    true_annual_rate = 1.002**12 - 1.0
+    assert script_rf == pytest.approx(true_annual_rate, rel=1e-6)
+
+    # Far from the old, wrong one-day-per-month value: reindexing the raw
+    # daily (derived) risk-free series directly onto the monthly dates
+    # instead of compounding every day of each month into it.
+    daily_risk_free = load_fama_french(app_config.factors_dir, "capm")["rf"]
+    naive = daily_risk_free.reindex(disclosed_dates).ffill().bfill()
+    naive_annual_rate = float((1.0 + naive).prod() ** (periods_per_year / len(naive)) - 1.0)
+    assert script_rf > naive_annual_rate * 15  # true rate is ~21x the naive one
+
+
+# ---------------------------------------------------------------------------
 # (i) SPY benchmark row charges the risk-free rate
 # ---------------------------------------------------------------------------
 
@@ -162,8 +213,8 @@ def test_spy_benchmark_sharpe_charges_the_risk_free_rate(tmp_path, capsys):
     app_config = load_config(config_path)
     assert app_config.factors_dir is not None
 
-    rf_annual_fn = pt._rf_annual_fn(app_config, zero_rf=False)
     results = {key: run_case_study(app_config, key) for key in pt.CASE_ORDER}
+    rf_annual_fn = pt._rf_annual_fn(results, zero_rf=False)
 
     pt.print_strategy_comparison(results, app_config, rf_annual_fn)
     out = capsys.readouterr().out
@@ -172,7 +223,7 @@ def test_spy_benchmark_sharpe_charges_the_risk_free_rate(tmp_path, capsys):
     prices = load_prices_csv(app_config.prices_path)
     spy_returns = to_return_matrix(prices)["SPY"].reindex(disclosed_dates)
     periods_per_year = infer_periods_per_year(disclosed_dates)
-    rf_annual = rf_annual_fn(disclosed_dates, periods_per_year)
+    rf_annual = rf_annual_fn("buffett", disclosed_dates, periods_per_year)
     assert rf_annual != 0.0  # sanity: this fixture actually charges a nonzero rf
 
     expected_sharpe = sharpe_ratio(spy_returns, periods_per_year, risk_free_rate=rf_annual)
@@ -231,8 +282,8 @@ def test_zero_rf_flag_matches_a_config_without_factors_dir(tmp_path, monkeypatch
 def test_print_strategy_comparison_raises_on_mismatched_windows(tmp_path):
     config_path = _write_fixture_with_factors_dir(tmp_path)
     app_config = load_config(config_path)
-    rf_annual_fn = pt._rf_annual_fn(app_config, zero_rf=False)
     results = {key: run_case_study(app_config, key) for key in pt.CASE_ORDER}
+    rf_annual_fn = pt._rf_annual_fn(results, zero_rf=False)
 
     disclosed = results["pelosi"].strategy_results["disclosed"]
     shorter_disclosed = dataclasses.replace(disclosed, returns=disclosed.returns.iloc[:-1])

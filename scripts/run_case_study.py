@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from portfolio_bl.backtest.attribution import attribution_table
+from portfolio_bl.backtest.attribution import FrequencyMismatchError, attribution_table
 from portfolio_bl.backtest.metrics import infer_periods_per_year
 from portfolio_bl.config import AppConfig, load_config
 from portfolio_bl.data.factors import load_fama_french
@@ -52,14 +52,16 @@ def _write_factor_attribution(
     ``<output_dir>/factor_attribution.csv``. Skipped silently (with a debug
     log line) when ``app_config.factors_dir`` is not configured.
 
-    :func:`~portfolio_bl.backtest.attribution.factor_regression` refuses to
-    regress returns whose inferred frequency differs from the (daily)
-    bundled factors' -- meaningless otherwise, since a non-daily return
-    would then be regressed against a single day's factor values per
-    period. When that happens (e.g. the case study's prices are monthly),
-    this function logs a warning and skips writing
-    ``factor_attribution.csv`` instead of raising, since the case study's
-    other outputs are already written by the caller by that point.
+    :func:`~portfolio_bl.backtest.attribution.factor_regression` raises
+    :class:`~portfolio_bl.backtest.attribution.FrequencyMismatchError` when
+    returns' inferred frequency differs from the (daily) bundled factors' --
+    meaningless otherwise, since a non-daily return would then be regressed
+    against a single day's factor values per period. When that happens (e.g.
+    the case study's prices are monthly), this function logs a warning and
+    skips writing ``factor_attribution.csv`` instead of raising, since the
+    case study's other outputs are already written by the caller by that
+    point. Any other error from the attribution table (too few aligned
+    observations, a missing risk-free column, etc.) propagates unchanged.
 
     Args:
         app_config: Application configuration; only used when
@@ -81,7 +83,7 @@ def _write_factor_attribution(
 
     try:
         table = attribution_table(returns_by_name, factor_sets, periods_per_year=periods_per_year)
-    except ValueError as exc:
+    except FrequencyMismatchError as exc:
         logger.warning("Skipping factor attribution: %s", exc)
         return
 

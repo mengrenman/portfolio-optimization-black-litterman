@@ -47,7 +47,6 @@ from portfolio_bl.backtest.metrics import (
     annualized_volatility,
     infer_periods_per_year,
     max_drawdown,
-    risk_free_per_period,
     sharpe_ratio,
 )
 from portfolio_bl.config import AppConfig, load_config
@@ -55,7 +54,6 @@ from portfolio_bl.data.disclosures import (
     latest_portfolio_for_aliases,
     load_disclosures_csv,
 )
-from portfolio_bl.data.factors import load_fama_french
 from portfolio_bl.data.prices import load_prices_csv, to_return_matrix
 from portfolio_bl.pipeline import CaseStudyResult, run_case_study
 
@@ -128,39 +126,36 @@ def _markdown_table(header: list[str], aligns: str, rows: list[list[str]]) -> st
     return "\n".join(lines)
 
 
-def _rf_annual_fn(app_config: AppConfig, zero_rf: bool):
-    """Build a function computing the annualized risk-free rate over a date index.
+def _rf_annual_fn(results: dict[str, CaseStudyResult], zero_rf: bool):
+    """Build a function computing the annualized risk-free rate for a case study's dates.
 
-    The daily T-bill series is loaded once and converted, once, into one
-    compounded rate per date of the price calendar (every date in
-    ``app_config.prices_path``, via :func:`~portfolio_bl.backtest.metrics.risk_free_per_period`)
-    -- exactly as :func:`~portfolio_bl.pipeline.run_case_study` now does.
-    Reindexing the raw daily series directly onto a non-daily ``index``
-    (e.g. monthly return dates) would silently keep only one day's rate per
-    period instead of compounding every day in it; converting once over the
-    price calendar avoids that regardless of what ``index`` the returned
-    function is later called with.
+    Reuses each case study's own
+    :attr:`~portfolio_bl.pipeline.CaseStudyResult.risk_free_series` -- the
+    same per-period series, already compounded once over the price calendar
+    by :func:`~portfolio_bl.pipeline.run_case_study`, that is charged in that
+    case study's own Sharpe and Sortino numbers -- instead of reloading and
+    re-converting the daily T-bill series from disk a second time.
 
     Args:
-        app_config: Application configuration; ``app_config.factors_dir``
-            and ``app_config.prices_path`` are used when ``zero_rf`` is
-            ``False``.
+        results: Mapping from case-study key to its already-computed
+            :class:`~portfolio_bl.pipeline.CaseStudyResult`.
         zero_rf: When ``True``, the returned function always returns 0.0
-            without touching ``app_config.factors_dir``.
+            without touching any result's ``risk_free_series``.
 
     Returns:
-        A callable ``(index, periods_per_year) -> float`` matching
-        :func:`~portfolio_bl.backtest.metrics.annualized_risk_free`.
+        A callable ``(case_key, index, periods_per_year) -> float`` giving
+        the annualized risk-free rate to charge for that case study's dates
+        (see :func:`~portfolio_bl.backtest.metrics.annualized_risk_free`);
+        0.0 when ``zero_rf`` or when that case study's ``risk_free_series``
+        is ``None`` (no ``factors_dir`` configured).
     """
-    if zero_rf or app_config.factors_dir is None:
-        return lambda index, periods_per_year: 0.0
 
-    daily_risk_free = load_fama_french(app_config.factors_dir, "capm")["rf"]
-    prices = load_prices_csv(app_config.prices_path)
-    price_dates = pd.DatetimeIndex(sorted(prices["date"].unique()))
-    risk_free_series = risk_free_per_period(daily_risk_free, price_dates)
-
-    def _fn(index: pd.DatetimeIndex, periods_per_year: int) -> float:
+    def _fn(case_key: str, index: pd.DatetimeIndex, periods_per_year: int) -> float:
+        if zero_rf:
+            return 0.0
+        risk_free_series = results[case_key].risk_free_series
+        if risk_free_series is None:
+            return 0.0
         return annualized_risk_free(risk_free_series, index, periods_per_year)
 
     return _fn
@@ -194,7 +189,7 @@ def print_strategy_comparison(
         results: Mapping from case-study key to its :class:`CaseStudyResult`,
             run with the same risk-free treatment as ``rf_annual_fn``.
         app_config: Application configuration (for the prices path).
-        rf_annual_fn: Callable ``(index, periods_per_year) -> float``
+        rf_annual_fn: Callable ``(case_key, index, periods_per_year) -> float``
             returning the annualized risk-free rate to charge SPY, matching
             the treatment used for ``results``.
     """
@@ -229,7 +224,7 @@ def print_strategy_comparison(
     prices = load_prices_csv(app_config.prices_path)
     spy_returns = to_return_matrix(prices)["SPY"].reindex(disclosed_dates)
     periods_per_year = infer_periods_per_year(disclosed_dates)
-    rf_annual = rf_annual_fn(disclosed_dates, periods_per_year)
+    rf_annual = rf_annual_fn("buffett", disclosed_dates, periods_per_year)
 
     bench_cells = [
         "benchmark",
@@ -301,7 +296,7 @@ def print_constant_mix_vs_buy_and_hold(
         app_config: Application configuration (for the disclosures path).
         universe_returns_by_case: Mapping from case-study key to the full
             daily return matrix restricted to that case's universe.
-        rf_annual_fn: Callable ``(index, periods_per_year) -> float``
+        rf_annual_fn: Callable ``(case_key, index, periods_per_year) -> float``
             returning the annualized risk-free rate for both the as-run and
             buy-and-hold Sharpe ratios.
     """
@@ -313,7 +308,7 @@ def print_constant_mix_vs_buy_and_hold(
         result = results[case_key]
         disclosed = result.strategy_results["disclosed"]
         periods_per_year = infer_periods_per_year(disclosed.returns.index)
-        rf_annual = rf_annual_fn(disclosed.returns.index, periods_per_year)
+        rf_annual = rf_annual_fn(case_key, disclosed.returns.index, periods_per_year)
 
         run_ret = annualized_return(disclosed.returns, periods_per_year)
         run_sharpe = sharpe_ratio(disclosed.returns, periods_per_year, risk_free_rate=rf_annual)
@@ -345,7 +340,7 @@ def print_transaction_costs(results: dict[str, CaseStudyResult], rf_annual_fn) -
 
     Args:
         results: Mapping from case-study key to its :class:`CaseStudyResult`.
-        rf_annual_fn: Callable ``(index, periods_per_year) -> float``
+        rf_annual_fn: Callable ``(case_key, index, periods_per_year) -> float``
             returning the annualized risk-free rate to use for the
             cost-adjusted Sharpe ratios, matching the uncharged series.
     """
@@ -358,7 +353,7 @@ def print_transaction_costs(results: dict[str, CaseStudyResult], rf_annual_fn) -
         strategy = result.strategy_results[strategy_key]
         avg_turnover = result.summary.loc[strategy_key, "avg_turnover"]
         periods_per_year = infer_periods_per_year(strategy.returns.index)
-        rf_annual = rf_annual_fn(strategy.returns.index, periods_per_year)
+        rf_annual = rf_annual_fn(case_key, strategy.returns.index, periods_per_year)
 
         charge_dates = strategy.weight_history.index.intersection(strategy.returns.index)
         cells = [PERSON_LABEL[case_key], STRATEGY_LABEL[strategy_key]]
@@ -440,10 +435,10 @@ def main() -> None:
 
     app_config = load_config(ROOT / "configs" / "case_studies.yaml")
     run_config = dataclasses.replace(app_config, factors_dir=None) if args.zero_rf else app_config
-    rf_annual_fn = _rf_annual_fn(app_config, args.zero_rf)
 
     print("running case studies ...")
     results = {key: run_case_study(run_config, key) for key in CASE_ORDER}
+    rf_annual_fn = _rf_annual_fn(results, args.zero_rf)
 
     prices = load_prices_csv(app_config.prices_path)
     all_returns = to_return_matrix(prices)

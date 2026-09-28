@@ -24,6 +24,24 @@ from portfolio_bl.backtest.metrics import infer_periods_per_year
 logger = logging.getLogger(__name__)
 
 
+class FrequencyMismatchError(ValueError):
+    """Raised when returns and factors have different inferred frequencies.
+
+    :func:`factor_regression` refuses to regress a return series against a
+    factor frame whose own inferred frequency (see
+    :func:`~portfolio_bl.backtest.metrics.infer_periods_per_year`) differs
+    from the returns': the inner join it otherwise performs would match each
+    return only to the factor row dated on exactly the same day, so a
+    non-daily return (e.g. monthly) regressed against daily factors would
+    silently end up fit on a single day's factor values per period --
+    meaningless, and not something the join's row count alone reveals. This
+    is a :class:`ValueError` subclass so existing ``except ValueError``
+    handlers keep working; catch this type specifically to distinguish a
+    frequency mismatch from every other way the regression can fail (too few
+    aligned observations, a missing risk-free column, and so on).
+    """
+
+
 def newey_west_lags(n_obs: int) -> int:
     """Compute the Newey-West (1994) rule-of-thumb truncation lag.
 
@@ -283,13 +301,13 @@ def factor_regression(
         A :class:`FactorRegression`.
 
     Raises:
-        ValueError: If ``rf_column`` is not a column of ``factors``; if
-            ``returns``' own inferred frequency (see
+        FrequencyMismatchError: If ``returns``' own inferred frequency (see
             :func:`~portfolio_bl.backtest.metrics.infer_periods_per_year`,
             applied to its non-null dates) differs from ``factors``' own
-            inferred frequency; or if fewer than
-            ``len(factors columns) - 1 + 2`` observations remain after
-            aligning dates and dropping missing values.
+            inferred frequency. A :class:`ValueError` subclass.
+        ValueError: If ``rf_column`` is not a column of ``factors``, or if
+            fewer than ``len(factors columns) - 1 + 2`` observations remain
+            after aligning dates and dropping missing values.
     """
     if rf_column not in factors.columns:
         raise ValueError(
@@ -309,7 +327,7 @@ def factor_regression(
     return_ppy = infer_periods_per_year(returns_valid.index)
     factor_ppy = infer_periods_per_year(factors.index)
     if return_ppy != factor_ppy:
-        raise ValueError(
+        raise FrequencyMismatchError(
             f"returns has an inferred frequency of {return_ppy} period(s)/year but factors "
             f"has {factor_ppy}; they must match to regress meaningfully (the bundled "
             "Fama-French factors are daily, periods_per_year=252)."

@@ -246,3 +246,33 @@ def test_main_with_monthly_prices_writes_everything_but_skips_factor_attribution
     warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warning_records) == 1
     assert "Skipping factor attribution" in warning_records[0].getMessage()
+
+
+def test_main_propagates_non_frequency_attribution_errors(tmp_path, monkeypatch):
+    """Only the frequency-mismatch case is caught and turned into a skipped-
+    with-warning outcome. Any other error from the attribution table (too
+    few aligned observations, a missing risk-free column, or anything else)
+    must propagate exactly as it would have before factor attribution was
+    added, not be swallowed as a warning.
+    """
+    config_path = _write_daily_fixtures_with_factors_dir(tmp_path)
+    _add_ff5_daily(config_path.parent / "factors")
+
+    def _boom(*args, **kwargs):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(run_case_study_script, "attribution_table", _boom)
+
+    out_dir = tmp_path / "out"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_case_study.py",
+            "--person", "buffett",
+            "--config", str(config_path),
+            "--output-dir", str(out_dir),
+        ],
+    )
+    with pytest.raises(ValueError, match="boom"):
+        run_case_study_script.main()

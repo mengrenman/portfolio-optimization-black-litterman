@@ -68,7 +68,7 @@ portfolio-optimization-black-litterman/
     data/                    # Disclosure, price and factor loaders
     models/                  # BL posterior, pick-matrix views, mean-variance logic
     pipeline.py              # End-to-end experiment runner
-  tests/                     # Unit + integration tests (204 tests)
+  tests/                     # Unit + integration tests (232 tests)
 ```
 
 ## Input Data Schemas
@@ -739,7 +739,9 @@ small-sample correction.
 
 `rf_t` is derived from the monthly T-bill rate rather than the published daily rate, which is
 rounded to 0.01% a day; see `data/raw/factors/README.md` for the size of that effect. The
-difference rows (each overlay minus the disclosed book, and Black-Litterman minus mean-variance)
+factors are daily, so the regression refuses a return series whose inferred frequency is not
+daily: an inner join would otherwise regress each monthly return on the single factor row dated
+on its month-end. The difference rows (each overlay minus the disclosed book, and Black-Litterman minus mean-variance)
 regress a return *difference* without subtracting `rf_t`, since the difference between two fully
 invested portfolios' returns is already a zero-cost excess return. Because the script restricts
 every series to the same dates, the alpha of a difference equals the difference of the two
@@ -808,9 +810,12 @@ DJT until the 2022-04-29 rebalance, the first with a complete lookback window.
 - Annualized return is **geometric**; annualized volatility is the sample standard deviation
   scaled by the square root of `periods_per_year`.
 - Sharpe and Sortino are **net of the risk-free rate**: the numerator is the geometric
-  annualized return minus the geometric annualized one-month T-bill return over the same days,
-  taken from the bundled Fama-French data when `data.factors_dir` is configured and zero
-  otherwise. This is not the textbook Sharpe ratio, which divides the arithmetic mean daily
+  annualized return minus the geometric annualized one-month T-bill return over the same return
+  periods, taken from the bundled Fama-French data when `data.factors_dir` is configured and zero
+  otherwise. Each period is charged the daily T-bill rate compounded over every trading day after
+  the previous price date up to and including its own, so a weekly or monthly return is charged
+  the whole period's T-bill return, not one day's; with the bundled daily prices each period is a
+  single trading day. This is not the textbook Sharpe ratio, which divides the arithmetic mean daily
   excess return by its own standard deviation. That version is 0.02 to 0.08 higher for every
   strategy and SPY except Trump's disclosed book, where it is 0.41 against 0.03 because an
   arithmetic mean carries no volatility drag at 147% volatility; almost all of that book's
@@ -952,22 +957,35 @@ result = run_case_study(cfg, person_key="buffett", view_confidence=0.80)
 ```
 
 The optional `data.factors_dir` key points to the directory of bundled Fama-French factor CSVs
-(`data/raw/factors` in the shipped config). When it is set, `run_case_study.py` also writes a
-per-case `factor_attribution.csv`, `scripts/factor_attribution.py` can run, and Sharpe and
-Sortino are charged the T-bill rate from the same files. When it is absent, `run_case_study.py`
-skips factor attribution silently, Sharpe and Sortino fall back to a zero risk-free rate, and the
-standalone attribution script raises an error. If the price data runs past the factor files'
-last month, which is normal after a refresh because French publishes with a lag, the missing
-days take the nearest available rate (and any days before the files begin take the first one).
-`run_case_study.py` and `performance_tables.py` each convert the daily rate to one compounded
-value per price date once per run and log a single warning with the count of periods that
-needed it; `make_figures.py` and `factor_attribution.py` switch logging off, so run one of the
-first two after a refresh. Factor attribution does not fill: it drops the uncovered days, so
-until the factor files are refreshed its sample is shorter than the Sharpe ratios'. Nothing caps
-the gap, and the error depends on how far rates move while the files lag.
-Dropping the last two months of the bundled files moves the annualized rate over this backtest by
-0.003 percentage points, and dropping three years moves it by 0.3, but a two-month gap while
-rates are moving fast, as after the March 2020 cuts, would move it far more.
+(`data/raw/factors` in the shipped config). When it is set, `scripts/factor_attribution.py` can
+run, Sharpe and Sortino are charged the T-bill rate from the same files, and, when the prices are
+daily, `run_case_study.py` also writes a per-case `factor_attribution.csv`. The factor files are
+daily, so attribution needs daily returns: with weekly or monthly prices `run_case_study.py`
+logs a warning and skips that file, and `factor_attribution.py` stops with an error. The
+risk-free charge works at any price frequency, because the daily rate is compounded over every
+trading day between consecutive price dates. When the key is absent, `run_case_study.py` skips
+factor attribution silently, Sharpe and Sortino fall back to a zero risk-free rate, and the
+standalone attribution script raises an error.
+
+If the price data runs past the factor files' last month, which is normal after a refresh
+because French publishes with a lag, every business day past the files' end (Monday to Friday,
+exchange holidays included) is charged the last available daily rate, and every business day
+before they begin is charged the first. Only the dates the strategies are charged over need
+covering: the lookback months before the first return are never charged. At most 63 business
+days, about three months, are filled on either side of that window. A longer gap stops the run
+with an error, so `run_case_study.py`, `performance_tables.py` and `make_figures.py` all fail
+until the factor files are refreshed with `scripts/fetch_fama_french.py` (with an earlier
+`--start` if the prices begin first); the error names the date to use. Each conversion logs one
+warning with the number of periods and business days it filled: `run_case_study.py` converts
+once per run, and `performance_tables.py` 10 times, once in each of its ten case-study runs,
+because its own tables reuse each run's converted rates. `make_figures.py` and
+`factor_attribution.py` switch logging off, so run one of the first two after a refresh. Factor
+attribution does not fill: it drops the uncovered days, so until the factor files are refreshed
+its sample is shorter than the Sharpe ratios'. Within the cap, the error depends on how far rates
+move while the files lag. Ending the factor files two months before the prices (at 2025-10-31,
+42 business days early) moves the annualized rate over this backtest by 0.007 percentage points,
+and ending them three months early (at 2025-09-30, 65 business days) stops the run. A two-month
+gap while rates are moving fast, as after the March 2020 cuts, would move the rate far more.
 
 ## Expressing Views with a Pick Matrix
 
@@ -1092,7 +1110,7 @@ these outputs and the report template are **not** tracked by git, while `data/` 
 ## Development
 
 ```bash
-pytest -q                       # 204 tests, about 4 seconds
+pytest -q                       # 232 tests, about 5 seconds
 ruff check src tests scripts    # linting
 python scripts/make_figures.py  # regenerate docs/figures/ (needs matplotlib)
 python scripts/performance_tables.py  # regenerate the Sharpe-bearing README tables
@@ -1110,15 +1128,15 @@ broken by refreshing the price data.
 
 | File | Tests | Covers |
 |---|---:|---|
-| `tests/test_attribution.py` | 28 | Newey-West OLS, factor regression, return-difference regressions, and the cross-strategy attribution table |
+| `tests/test_attribution.py` | 32 | Newey-West OLS, factor regression and its frequency guard, return-difference regressions, and the cross-strategy attribution table |
 | `tests/test_black_litterman.py` | 19 | Equilibrium returns, omega, posterior, long-only weights |
 | `tests/test_data_loaders.py` | 15 | Disclosure and price loading, cleaning, return matrix |
 | `tests/test_factor_wiring.py` | 3 | `data.factors_dir` config parsing, and config to loader to pipeline to attribution table on synthetic data (this file does not run the scripts) |
 | `tests/test_factors_data.py` | 22 | Fama-French CSV loading, validation, and the derived risk-free rate |
-| `tests/test_metrics.py` | 27 | Frequency inference, every performance metric, and the annualized risk-free rate |
-| `tests/test_performance_tables.py` | 3 | `performance_tables.py`: the SPY row's risk-free charge, `--zero-rf` against a config without factor data, and the shared-window check |
-| `tests/test_pipeline_smoke.py` | 11 | End-to-end runs, config error paths, and the risk-free rate with and without factor data |
-| `tests/test_run_case_study_script.py` | 2 | `run_case_study.py` end to end: `metadata.csv` rows and the `risk_free_rate` written, with and without factor data |
+| `tests/test_metrics.py` | 47 | Frequency inference, every performance metric, the annualized risk-free rate and its frequency guard, and compounding the daily rate over a price calendar, including the extension cap |
+| `tests/test_performance_tables.py` | 4 | `performance_tables.py`: the SPY row's risk-free charge, the charge at monthly frequency, `--zero-rf` against a config without factor data, and the shared-window check |
+| `tests/test_pipeline_smoke.py` | 12 | End-to-end runs, config error paths, the risk-free rate with and without factor data, and converting only the charged window |
+| `tests/test_run_case_study_script.py` | 4 | `run_case_study.py` end to end: `metadata.csv` rows and the `risk_free_rate` written, with and without factor data, factor attribution skipped for monthly prices, and any other attribution error still failing the run |
 | `tests/test_views.py` | 74 | Views, pick-matrix construction, config parsing, ridge calibration |
 
 `ruff` currently reports 11 findings, all pre-existing and cosmetic: six import-ordering issues,
