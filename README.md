@@ -68,7 +68,7 @@ portfolio-optimization-black-litterman/
     data/                    # Disclosure, price and factor loaders
     models/                  # BL posterior, pick-matrix views, mean-variance logic
     pipeline.py              # End-to-end experiment runner
-  tests/                     # Unit + integration tests (199 tests)
+  tests/                     # Unit + integration tests (204 tests)
 ```
 
 ## Input Data Schemas
@@ -226,10 +226,14 @@ title is scale-free and comparable across all three.
   inherits the ticker's swings almost directly. Both optimizers re-estimate weights from the
   lookback window and never take on that concentration, which is why mean-variance turns a
   0.03 Sharpe into 0.55.
-- **Black-Litterman's Sharpe ratio lands between its two inputs' in every case**, which is what
-  the model is built to do rather than a disappointment. It does not on every column: Trump's
-  overlay compounds at 6.0% against 7.5% and 8.4%, and Buffett's has the lowest volatility and
-  the shallowest drawdown of the three.
+- **Black-Litterman's Sharpe ratio lands between those of its two inputs in every case.** That
+  fits a posterior that blends the disclosed book's implied returns with the sample means, but
+  nothing guarantees it: at a view confidence of 0.01, Buffett's Black-Litterman Sharpe edges
+  above the disclosed book's (0.640 against 0.635). Nor does it hold on every column. Trump's
+  overlay compounds at 6.0% against 7.5% and 8.4%. Among each person's three strategies,
+  Buffett's and Pelosi's Black-Litterman overlays have the lowest volatility (Pelosi's by a
+  margin the table's rounding hides, 25.06% against 25.13%), and Buffett's also has the
+  shallowest drawdown.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/figures/drawdowns-dark.png">
@@ -889,9 +893,13 @@ be at a zero rate by 2.6% divided by the strategy's volatility: 0.02 for the 147
 Trump book, 0.25 and 0.23 for the Trump mean-variance and Black-Litterman overlays (10.5% and
 11.5% volatility), and 0.09 to 0.13 for every other strategy and SPY. With the geometric
 numerator used here, the ordering within each case study is the same at either rate, in the
-headline table and at every cost level in the table above. Two things do change. Trump's
-mean-variance overlay falls from ahead of SPY (0.80 against 0.74) to behind it (0.55 against
-0.61). And the invariance depends on the convention: with the textbook Sharpe ratio, charging
+headline table and at every cost level in the table above. Across case studies, three
+orderings in the headline table do reverse, all involving the Trump overlays, whose low
+volatility makes the charge largest. Trump's mean-variance overlay falls from ahead of SPY
+(0.80 against 0.74) to behind it (0.55 against 0.61), and from ahead of Buffett's disclosed book
+(0.80 against 0.75) to behind it (0.55 against 0.64). Trump's Black-Litterman overlay falls from
+ahead of Buffett's mean-variance overlay (0.52 against 0.49) to behind it (0.30 against 0.37).
+The invariance also depends on the convention: with the textbook Sharpe ratio, charging
 the T-bill moves Trump's Black-Litterman overlay from ahead of the disclosed book (0.56 against
 0.43) to behind it (0.34 against 0.41), because that book's two SPAC days inflate its arithmetic
 mean. The zero-rate figures are available with `python scripts/performance_tables.py --zero-rf`.
@@ -951,10 +959,14 @@ skips factor attribution silently, Sharpe and Sortino fall back to a zero risk-f
 standalone attribution script raises an error. If the price data runs past the factor files'
 last month, which is normal after a refresh because French publishes with a lag, the missing
 days take the nearest available rate (and any days before the files begin take the first one).
-`run_case_study.py` and `performance_tables.py` log a warning with the count; `make_figures.py`
-switches logging off, so run one of the other two first after a refresh. Nothing caps the gap:
-a couple of missing months moves the annualized rate by well under 0.01 point, but three
-missing years would move it by about 0.3 points.
+`run_case_study.py` and `performance_tables.py` log a warning with the count, once per
+strategy and table, so it repeats; `make_figures.py` and `factor_attribution.py` switch logging
+off, so run one of the first two after a refresh. Factor attribution does not fill: it drops the
+uncovered days, so until the factor files are refreshed its sample is shorter than the Sharpe
+ratios'. Nothing caps the gap, and the error depends on how far rates move while the files lag.
+Dropping the last two months of the bundled files moves the annualized rate over this backtest by
+0.003 percentage points, and dropping three years moves it by 0.3, but a two-month gap while
+rates are moving fast, as after the March 2020 cuts, would move it far more.
 
 ## Expressing Views with a Pick Matrix
 
@@ -1079,7 +1091,7 @@ these outputs and the report template are **not** tracked by git, while `data/` 
 ## Development
 
 ```bash
-pytest -q                       # 199 tests, about 2 seconds
+pytest -q                       # 204 tests, about 4 seconds
 ruff check src tests scripts    # linting
 python scripts/make_figures.py  # regenerate docs/figures/ (needs matplotlib)
 python scripts/performance_tables.py  # regenerate the Sharpe-bearing README tables
@@ -1100,10 +1112,12 @@ broken by refreshing the price data.
 | `tests/test_attribution.py` | 28 | Newey-West OLS, factor regression, return-difference regressions, and the cross-strategy attribution table |
 | `tests/test_black_litterman.py` | 19 | Equilibrium returns, omega, posterior, long-only weights |
 | `tests/test_data_loaders.py` | 15 | Disclosure and price loading, cleaning, return matrix |
-| `tests/test_factor_wiring.py` | 3 | `data.factors_dir` config parsing, and config to loader to pipeline to attribution table on synthetic data (the two scripts themselves are not exercised) |
+| `tests/test_factor_wiring.py` | 3 | `data.factors_dir` config parsing, and config to loader to pipeline to attribution table on synthetic data (this file does not run the scripts) |
 | `tests/test_factors_data.py` | 22 | Fama-French CSV loading, validation, and the derived risk-free rate |
 | `tests/test_metrics.py` | 27 | Frequency inference, every performance metric, and the annualized risk-free rate |
+| `tests/test_performance_tables.py` | 3 | `performance_tables.py`: the SPY row's risk-free charge, `--zero-rf` against a config without factor data, and the shared-window check |
 | `tests/test_pipeline_smoke.py` | 11 | End-to-end runs, config error paths, and the risk-free rate with and without factor data |
+| `tests/test_run_case_study_script.py` | 2 | `run_case_study.py` end to end: `metadata.csv` rows and the `risk_free_rate` written, with and without factor data |
 | `tests/test_views.py` | 74 | Views, pick-matrix construction, config parsing, ridge calibration |
 
 `ruff` currently reports 11 findings, all pre-existing and cosmetic: six import-ordering issues,
